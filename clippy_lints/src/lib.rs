@@ -198,6 +198,7 @@ pub mod unsafe_removed_from_name;
 pub mod unused_io_amount;
 pub mod unused_label;
 pub mod unwrap;
+pub mod use_last;
 pub mod use_self;
 pub mod vec;
 pub mod wildcard_dependencies;
@@ -785,6 +786,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         unsafe_removed_from_name::UNSAFE_REMOVED_FROM_NAME,
         unused_io_amount::UNUSED_IO_AMOUNT,
         unused_label::UNUSED_LABEL,
+        use_last::USE_LAST,
         vec::USELESS_VEC,
         write::PRINTLN_EMPTY_STRING,
         write::PRINT_LITERAL,
@@ -948,6 +950,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         types::UNNECESSARY_CAST,
         types::VEC_BOX,
         unused_label::UNUSED_LABEL,
+        use_last::USE_LAST,
         zero_div_zero::ZERO_DIVIDED_BY_ZERO,
     ]);
 
