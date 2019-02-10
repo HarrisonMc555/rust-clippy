@@ -50,8 +50,8 @@ impl LintPass for UseLast {
     }
 }
 
-impl LateLintPass for UseLast {
-    fn check_expr(&mut self, cx: &LateContext<'_>, mut item: &Expr) {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
+    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
             if let StmtKind::Local(ref local) = stmt.node;
             if let Some(ref init) = local.init
@@ -60,7 +60,12 @@ impl LateLintPass for UseLast {
             if let PatKind::Binding(BindingAnnotation::Unannotated, _, name, None) = local.pat.node;
             if name.node.as_str() == "last_element";
             then {
-                // report your lint here
+                span_lint(cx,
+                          USE_LAST,
+                          expr.span,
+                          // Todo: fix this
+                          &format!("It is more idiomatic to use {}.iter().enumerate()",
+                                   snippet(cx, iter_args[0].span, "_")));
             }
         }
         
