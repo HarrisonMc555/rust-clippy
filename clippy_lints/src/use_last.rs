@@ -1,17 +1,20 @@
 //! lint on using `x.get(x.len() - 1)` instead of `x.last()`
 
-use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
+// use crate::utils::{in_macro, snippet_opt, last_path_segment, match_def_path, paths, snippet, span_lint, span_lint_and_then};
+// use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
+use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_tool_lint, lint_array};
-use if_chain::if_chain;
+// use if_chain::if_chain;
 // use syntax::ast::*;
-use rustc::hir::*;
-use crate::utils::{last_path_segment, match_def_path, paths, snippet, span_lint, span_lint_and_then};
-use crate::utils::{opt_def_id, sugg};
+use rustc::hir::{PatKind, BindingAnnotation, Expr, ExprKind};
+// use crate::utils::{opt_def_id, sugg};
+// use crate::utils::{span_lint, snippet};
+use crate::utils::span_lint;
 use if_chain::if_chain;
-use rustc::ty::{self, Ty};
-use rustc_errors::Applicability;
-use std::borrow::Cow;
-use syntax::ast;
+// use rustc::ty::{self, Ty};
+// use rustc_errors::Applicability;
+// use std::borrow::Cow;
+// use syntax::ast;
 
 /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of `x.last()`.
 ///
@@ -51,23 +54,23 @@ impl LintPass for UseLast {
 }
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
+    fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
-            if let StmtKind::Local(ref local) = stmt.node;
-            if let Some(ref init) = local.init
-                if let ExprKind::MethodCall(ref method_name, ref generics, ref args) = init.node;
-            // unimplemented: `ExprKind::MethodCall` is not further destructured at the moment
-            if let PatKind::Binding(BindingAnnotation::Unannotated, _, name, None) = local.pat.node;
-            if name.node.as_str() == "last_element";
+            if let ExprKind::MethodCall(ref path, _, ref args) = expr.node;
+            // check if vector
+            // TODO: check if vector
+            // check if calling 'get' method
+            if path.ident.name.as_str() == "get";
+            // if let ExprKind::MethodCall(ref method_name, ref generics, ref args) = init.node;
+            // if let PatKind::Binding(BindingAnnotation::Unannotated, _, name, _, None) = local.pat.node;
+            // if name.node.as_str() == "last_element";
             then {
                 span_lint(cx,
                           USE_LAST,
-                          expr.span,
+                          stmt.span,
                           // Todo: fix this
-                          &format!("It is more idiomatic to use {}.iter().enumerate()",
-                                   snippet(cx, iter_args[0].span, "_")));
+                          &format!("Use `x.last()` instead of `x.get(x.len() - 1)`"));
             }
         }
-        
     }
 }

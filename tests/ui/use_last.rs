@@ -1,5 +1,5 @@
 #![warn(clippy::all)]
-#![warn(clippy::use_last)]
+// #![warn(clippy::use_last)]
 
 fn dont_use_last() -> Option<i32> {
     let x = vec![2, 3, 5];
