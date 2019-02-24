@@ -193,7 +193,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
                                 .skip(1)
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            implements_trait(cx, cx.tcx.mk_imm_ref(&RegionKind::ReErased, ty), t.def_id(), ty_params)
+                            implements_trait(cx, cx.tcx.mk_imm_ref(&RegionKind::ReEmpty, ty), t.def_id(), ty_params)
                         }),
                 )
             };
@@ -234,7 +234,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
                                 .and_then(|ps| ps.args.as_ref())
                                 .map(|params| params.args.iter().find_map(|arg| match arg {
                                     GenericArg::Type(ty) => Some(ty),
-                                    GenericArg::Lifetime(_) => None,
+                                    _ => None,
                                 }).unwrap());
                             then {
                                 let slice_ty = format!("&[{}]", snippet(cx, elem_ty.span, "_"));

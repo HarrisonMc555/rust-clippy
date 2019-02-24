@@ -78,7 +78,7 @@ impl CyclomaticComplexity {
             returns,
             ..
         } = helper;
-        let ret_ty = cx.tables.node_id_to_type(expr.hir_id);
+        let ret_ty = cx.tables.node_type(expr.hir_id);
         let ret_adjust = if match_type(cx, ret_ty, &paths::RESULT) {
             returns
         } else {
@@ -94,7 +94,7 @@ impl CyclomaticComplexity {
                 short_circuits,
                 ret_adjust,
                 span,
-                body.id().node_id,
+                body.id().hir_id,
             );
         } else {
             let mut rust_cc = cc + divergence - match_arms - short_circuits;
@@ -159,7 +159,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CCHelper<'a, 'tcx> {
             },
             ExprKind::Call(ref callee, _) => {
                 walk_expr(self, e);
-                let ty = self.cx.tables.node_id_to_type(callee.hir_id);
+                let ty = self.cx.tables.node_type(callee.hir_id);
                 match ty.sty {
                     ty::FnDef(..) | ty::FnPtr(_) => {
                         let sig = ty.fn_sig(self.cx.tcx);
@@ -197,7 +197,7 @@ fn report_cc_bug(
     shorts: u64,
     returns: u64,
     span: Span,
-    _: NodeId,
+    _: HirId,
 ) {
     span_bug!(
         span,
@@ -220,9 +220,10 @@ fn report_cc_bug(
     shorts: u64,
     returns: u64,
     span: Span,
-    id: NodeId,
+    id: HirId,
 ) {
-    if !is_allowed(cx, CYCLOMATIC_COMPLEXITY, id) {
+    let node_id = cx.tcx.hir().hir_to_node_id(id);
+    if !is_allowed(cx, CYCLOMATIC_COMPLEXITY, node_id) {
         cx.sess().span_note_without_error(
             span,
             &format!(

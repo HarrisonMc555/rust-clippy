@@ -27,7 +27,7 @@ use syntax_pos::BytePos;
 
 use crate::utils::paths;
 use crate::utils::{
-    get_enclosing_block, get_parent_expr, higher, is_integer_literal, is_refutable, last_path_segment,
+    get_enclosing_block, get_parent_expr, has_iter_method, higher, is_integer_literal, is_refutable, last_path_segment,
     match_trait_method, match_type, match_var, multispan_sugg, snippet, snippet_opt, snippet_with_applicability,
     span_help_and_lint, span_lint, span_lint_and_sugg, span_lint_and_then, SpanlessEq,
 };
@@ -1118,6 +1118,12 @@ fn check_for_loop_range<'a, 'tcx>(
                     }
                 }
 
+                // don't lint if the container that is indexed does not have .iter() method
+                let has_iter = has_iter_method(cx, indexed_ty);
+                if has_iter.is_none() {
+                    return;
+                }
+
                 // don't lint if the container that is indexed into is also used without
                 // indexing
                 if visitor.referenced.contains(&indexed) {
@@ -1781,7 +1787,7 @@ impl<'a, 'tcx> VarVisitor<'a, 'tcx> {
                             if index_used_directly {
                                 self.indexed_directly.insert(
                                     seqvar.segments[0].ident.name,
-                                    (Some(extent), self.cx.tables.node_id_to_type(seqexpr.hir_id)),
+                                    (Some(extent), self.cx.tables.node_type(seqexpr.hir_id)),
                                 );
                             }
                             return false;  // no need to walk further *on the variable*
@@ -1793,7 +1799,7 @@ impl<'a, 'tcx> VarVisitor<'a, 'tcx> {
                             if index_used_directly {
                                 self.indexed_directly.insert(
                                     seqvar.segments[0].ident.name,
-                                    (None, self.cx.tables.node_id_to_type(seqexpr.hir_id)),
+                                    (None, self.cx.tables.node_type(seqexpr.hir_id)),
                                 );
                             }
                             return false;  // no need to walk further *on the variable*
@@ -1830,17 +1836,29 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
             if let ExprKind::Path(ref qpath) = expr.node;
             if let QPath::Resolved(None, ref path) = *qpath;
             if path.segments.len() == 1;
-            if let Def::Local(local_id) = self.cx.tables.qpath_def(qpath, expr.hir_id);
             then {
-                if local_id == self.var {
-                    // we are not indexing anything, record that
-                    self.nonindex = true;
-                } else {
-                    // not the correct variable, but still a variable
-                    self.referenced.insert(path.segments[0].ident.name);
+                match self.cx.tables.qpath_def(qpath, expr.hir_id) {
+                    Def::Upvar(local_id, ..) => {
+                        if local_id == self.var {
+                            // we are not indexing anything, record that
+                            self.nonindex = true;
+                        }
+                    }
+                    Def::Local(local_id) =>
+                    {
+
+                        if local_id == self.var {
+                            self.nonindex = true;
+                        } else {
+                            // not the correct variable, but still a variable
+                            self.referenced.insert(path.segments[0].ident.name);
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
+
         let old = self.prefer_mutable;
         match expr.node {
             ExprKind::AssignOp(_, ref lhs, ref rhs) | ExprKind::Assign(ref lhs, ref rhs) => {
@@ -1879,6 +1897,10 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
                     }
                     self.visit_expr(expr);
                 }
+            },
+            ExprKind::Closure(_, _, body_id, ..) => {
+                let body = self.cx.tcx.hir().body(body_id);
+                self.visit_expr(&body.value);
             },
             _ => walk_expr(self, expr),
         }
@@ -2402,7 +2424,7 @@ fn check_needless_collect<'a, 'tcx>(expr: &'tcx Expr, cx: &LateContext<'a, 'tcx>
         if let Some(ref generic_args) = chain_method.args;
         if let Some(GenericArg::Type(ref ty)) = generic_args.args.get(0);
         then {
-            let ty = cx.tables.node_id_to_type(ty.hir_id);
+            let ty = cx.tables.node_type(ty.hir_id);
             if match_type(cx, ty, &paths::VEC) ||
                 match_type(cx, ty, &paths::VEC_DEQUE) ||
                 match_type(cx, ty, &paths::BTREEMAP) ||
