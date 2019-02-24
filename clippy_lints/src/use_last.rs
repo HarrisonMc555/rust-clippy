@@ -11,6 +11,10 @@ use if_chain::if_chain;
 ///
 /// **Why is this bad?** Using `x.last()` is easier to read and has the same result.
 ///
+/// Note that using x[x.len() - 1] is semantically different from x.last(),
+/// since indexing into the array will panic on out-of-bounds accesses, while
+/// x.get() and x.last() will return None.
+///
 /// **Known problems:** None.
 ///
 /// **Example:**
