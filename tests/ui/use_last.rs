@@ -15,5 +15,5 @@ fn index_into_last() -> i32 {
 fn main() {
     let expected_value: i32 = 5;
     assert_eq!(dont_use_last(), Some(expected_value));
-    assert_eq!(index_into_last(), 5);
+    assert_eq!(index_into_last(), expected_value);
 }
