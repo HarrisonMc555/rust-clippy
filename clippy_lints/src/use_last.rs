@@ -1,9 +1,10 @@
 //! lint on using `x.get(x.len() - 1)` instead of `x.last()`
 
-use crate::utils::{match_type, paths, span_lint};
+use crate::utils::{match_type, paths, span_lint_and_sugg, snippet_with_applicability};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_tool_lint, lint_array};
 use rustc::hir::{Expr, ExprKind};
+use rustc_errors::Applicability;
 use syntax::ast::{LitKind};
 use if_chain::if_chain;
 
@@ -11,9 +12,12 @@ use if_chain::if_chain;
 ///
 /// **Why is this bad?** Using `x.last()` is easier to read and has the same result.
 ///
-/// Note that using x[x.len() - 1] is semantically different from x.last(),
-/// since indexing into the array will panic on out-of-bounds accesses, while
-/// x.get() and x.last() will return None.
+/// Note that using `x[x.len() - 1]` is semantically different from `x.last()`.
+/// Indexing into the array will panic on out-of-bounds accesses, while
+/// `x.get()` and `x.last()` will return `None`.
+///
+/// There is another lint (get_unwrap) that covers the case of using
+/// `x.get(index).unwrap()` instead of `x[index]`.
 ///
 /// **Known problems:** None.
 ///
@@ -79,11 +83,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
 
             // LHS of subtraction is "x.len()"
             if let ExprKind::MethodCall(ref arg_lhs_path, _, ref lhs_args) = lhs.node;
-            // let _ = println!("LHS of sub is a method call");
+             // let _ = println!("LHS of sub is a method call");
             if arg_lhs_path.ident.name == "len";
             // let _ = println!("LHS of sub was method named len");
-            // if let Some(arg_lhs_struct) = lhs_args.get(0);
+            if let Some(_arg_lhs_struct) = lhs_args.get(0);
             // let _ = println!("LHS of sub method has an arg");
+
             // TODO: Is this a valid way to check if they reference the same vector?
             // if arg_lhs_struct.hir_id == struct_calling_on.hir_id;
             // let _ = println!("The vector in .get and .len were the same");
@@ -96,24 +101,22 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if rhs_value == 1;
             // let _ = println!("RHS of sub was 1");
 
-            // TODO: Figure out how to get name of variable for lint message
-            // Can't do this (cannot move out of borrowed content (context?))
-            // if let ExprKind::Struct(ref struct_calling_on_path, _, _) = struct_calling_on.node;
-            // let _ = println!("It was a struct");
-            // let vec_name = match struct_calling_on_path.into_inner() {
-            //     rustc::hir::QPath::Resolved(_, path) =>
-            //         path.segments.last().map(|path_seg| path_seg.ident.name.as_str().get()).unwrap_or("x"),
-            //     rustc::hir::QPath::TypeRelative(_, path_seg) => path_seg.ident.name.as_str().get(),
-            // };
-            let vec_name = "x";
+            let mut applicability = Applicability::MachineApplicable;
+            let vec_name = snippet_with_applicability(
+                cx, struct_calling_on.span, "x", &mut applicability);
             // let _ = println!("About to span_lint on \"{}\"", vec_name);
 
             then {
-                span_lint(cx,
-                          USE_LAST,
-                          expr.span,
-                          &format!("Use `{}.last()` instead of `{}.get({}.len() - 1)`",
-                                   vec_name, vec_name, vec_name));
+                span_lint_and_sugg(
+                    cx,
+                    USE_LAST,
+                    expr.span,
+                    &format!("Use `{}.last()` instead of `{}.get({}.len() - 1)`",
+                             vec_name, vec_name, vec_name),
+                    "try",
+                    format!("{}.last()", vec_name),
+                    applicability,
+                );
             }
         }
     }
