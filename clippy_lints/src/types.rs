@@ -1,7 +1,6 @@
 #![allow(clippy::default_hash_types)]
 
 use crate::consts::{constant, Constant};
-use crate::reexport::*;
 use crate::utils::paths;
 use crate::utils::{
     clip, comparisons, differing_macro_contexts, higher, in_constant, in_macro, int_bits, last_path_segment,
@@ -175,9 +174,9 @@ impl LintPass for TypePass {
 }
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypePass {
-    fn check_fn(&mut self, cx: &LateContext<'_, '_>, _: FnKind<'_>, decl: &FnDecl, _: &Body, _: Span, id: NodeId) {
+    fn check_fn(&mut self, cx: &LateContext<'_, '_>, _: FnKind<'_>, decl: &FnDecl, _: &Body, _: Span, id: HirId) {
         // skip trait implementations, see #605
-        if let Some(hir::Node::Item(item)) = cx.tcx.hir().find(cx.tcx.hir().get_parent(id)) {
+        if let Some(hir::Node::Item(item)) = cx.tcx.hir().find_by_hir_id(cx.tcx.hir().get_parent_item(id)) {
             if let ItemKind::Impl(_, _, _, _, Some(..), _, _) = item.node {
                 return;
             }
@@ -223,10 +222,10 @@ fn match_type_parameter(cx: &LateContext<'_, '_>, qpath: &QPath, path: &[&str]) 
         if !params.parenthesized;
         if let Some(ty) = params.args.iter().find_map(|arg| match arg {
             GenericArg::Type(ty) => Some(ty),
-            GenericArg::Lifetime(_) => None,
+            _ => None,
         });
         if let TyKind::Path(ref qpath) = ty.node;
-        if let Some(did) = opt_def_id(cx.tables.qpath_def(qpath, cx.tcx.hir().node_to_hir_id(ty.id)));
+        if let Some(did) = opt_def_id(cx.tables.qpath_def(qpath, ty.hir_id));
         if match_def_path(cx.tcx, did, path);
         then {
             return true;
@@ -247,7 +246,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
     }
     match hir_ty.node {
         TyKind::Path(ref qpath) if !is_local => {
-            let hir_id = cx.tcx.hir().node_to_hir_id(hir_ty.id);
+            let hir_id = hir_ty.hir_id;
             let def = cx.tables.qpath_def(qpath, hir_id);
             if let Some(def_id) = opt_def_id(def) {
                 if Some(def_id) == cx.tcx.lang_items().owned_box() {
@@ -267,7 +266,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
                         if let Some(ref last) = last_path_segment(qpath).args;
                         if let Some(ty) = last.args.iter().find_map(|arg| match arg {
                             GenericArg::Type(ty) => Some(ty),
-                            GenericArg::Lifetime(_) => None,
+                            _ => None,
                         });
                         // ty is now _ at this point
                         if let TyKind::Path(ref ty_qpath) = ty.node;
@@ -278,7 +277,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
                         if let Some(ref last) = last_path_segment(ty_qpath).args;
                         if let Some(boxed_ty) = last.args.iter().find_map(|arg| match arg {
                             GenericArg::Type(ty) => Some(ty),
-                            GenericArg::Lifetime(_) => None,
+                            _ => None,
                         });
                         then {
                             let ty_ty = hir_ty_to_ty(cx.tcx, boxed_ty);
@@ -327,7 +326,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
                             .map_or_else(|| [].iter(), |params| params.args.iter())
                             .filter_map(|arg| match arg {
                                 GenericArg::Type(ty) => Some(ty),
-                                GenericArg::Lifetime(_) => None,
+                                _ => None,
                             })
                     }) {
                         check_ty(cx, ty, is_local);
@@ -340,7 +339,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
                             .map_or_else(|| [].iter(), |params| params.args.iter())
                             .filter_map(|arg| match arg {
                                 GenericArg::Type(ty) => Some(ty),
-                                GenericArg::Lifetime(_) => None,
+                                _ => None,
                             })
                     }) {
                         check_ty(cx, ty, is_local);
@@ -351,7 +350,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
                     if let Some(ref params) = seg.args {
                         for ty in params.args.iter().filter_map(|arg| match arg {
                             GenericArg::Type(ty) => Some(ty),
-                            GenericArg::Lifetime(_) => None,
+                            _ => None,
                         }) {
                             check_ty(cx, ty, is_local);
                         }
@@ -376,7 +375,7 @@ fn check_ty(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool) {
 fn check_ty_rptr(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool, lt: &Lifetime, mut_ty: &MutTy) {
     match mut_ty.ty.node {
         TyKind::Path(ref qpath) => {
-            let hir_id = cx.tcx.hir().node_to_hir_id(mut_ty.ty.id);
+            let hir_id = mut_ty.ty.hir_id;
             let def = cx.tables.qpath_def(qpath, hir_id);
             if_chain! {
                 if let Some(def_id) = opt_def_id(def);
@@ -387,7 +386,7 @@ fn check_ty_rptr(cx: &LateContext<'_, '_>, hir_ty: &hir::Ty, is_local: bool, lt:
                 if !params.parenthesized;
                 if let Some(inner) = params.args.iter().find_map(|arg| match arg {
                     GenericArg::Type(ty) => Some(ty),
-                    GenericArg::Lifetime(_) => None,
+                    _ => None,
                 });
                 then {
                     if is_any_trait(inner) {
@@ -618,7 +617,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnitArg {
         }
         if_chain! {
             let map = &cx.tcx.hir();
-            let opt_parent_node = map.find(map.get_parent_node(expr.id));
+            let opt_parent_node = map.find_by_hir_id(map.get_parent_node_by_hir_id(expr.hir_id));
             if let Some(hir::Node::Expr(parent_expr)) = opt_parent_node;
             if is_questionmark_desugar_marked_call(parent_expr);
             then {
@@ -962,7 +961,7 @@ fn should_strip_parens(op: &Expr, snip: &str) -> bool {
 
 fn span_lossless_lint(cx: &LateContext<'_, '_>, expr: &Expr, op: &Expr, cast_from: Ty<'_>, cast_to: Ty<'_>) {
     // Do not suggest using From in consts/statics until it is valid to do so (see #2267).
-    if in_constant(cx, expr.id) {
+    if in_constant(cx, expr.hir_id) {
         return;
     }
     // The suggestion is to use a function call, so if the original expression
@@ -1336,7 +1335,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeComplexityPass {
         decl: &'tcx FnDecl,
         _: &'tcx Body,
         _: Span,
-        _: NodeId,
+        _: HirId,
     ) {
         self.check_fndecl(cx, decl);
     }
@@ -2138,7 +2137,7 @@ impl<'tcx> ImplicitHasherType<'tcx> {
                 .iter()
                 .filter_map(|arg| match arg {
                     GenericArg::Type(ty) => Some(ty),
-                    GenericArg::Lifetime(_) => None,
+                    _ => None,
                 })
                 .collect();
             let params_len = params.len();
@@ -2239,8 +2238,10 @@ impl<'a, 'b, 'tcx: 'a + 'b> ImplicitHasherConstructorVisitor<'a, 'b, 'tcx> {
 
 impl<'a, 'b, 'tcx: 'a + 'b> Visitor<'tcx> for ImplicitHasherConstructorVisitor<'a, 'b, 'tcx> {
     fn visit_body(&mut self, body: &'tcx Body) {
+        let prev_body = self.body;
         self.body = self.cx.tcx.body_tables(body.id());
         walk_body(self, body);
+        self.body = prev_body;
     }
 
     fn visit_expr(&mut self, e: &'tcx Expr) {
@@ -2343,7 +2344,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for RefToMut {
             if let TyKind::Ptr(MutTy { mutbl: Mutability::MutMutable, .. }) = t.node;
             if let ExprKind::Cast(e, t) = &e.node;
             if let TyKind::Ptr(MutTy { mutbl: Mutability::MutImmutable, .. }) = t.node;
-            if let ty::Ref(..) = cx.tables.node_id_to_type(e.hir_id).sty;
+            if let ty::Ref(..) = cx.tables.node_type(e.hir_id).sty;
             then {
                 span_lint(
                     cx,

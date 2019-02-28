@@ -1,7 +1,6 @@
 // error-pattern:yummy
 #![feature(box_syntax)]
 #![feature(rustc_private)]
-#![feature(try_from)]
 #![allow(clippy::missing_docs_in_private_items)]
 
 // FIXME: switch to something more ergonomic here, once available.
@@ -47,7 +46,7 @@ fn arg_value<'a>(
 fn test_arg_value() {
     let args: Vec<_> = ["--bar=bar", "--foobar", "123", "--foo"]
         .iter()
-        .map(|s| s.to_string())
+        .map(std::string::ToString::to_string)
         .collect();
 
     assert_eq!(arg_value(None, "--foobar", |_| true), None);
@@ -84,7 +83,7 @@ pub fn main() {
             let sys_root_arg = arg_value(&orig_args, "--sysroot", |_| true);
             let have_sys_root_arg = sys_root_arg.is_some();
             let sys_root = sys_root_arg
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
                 .or_else(|| std::env::var("SYSROOT").ok())
                 .or_else(|| {
                     let home = option_env!("RUSTUP_HOME").or(option_env!("MULTIRUST_HOME"));

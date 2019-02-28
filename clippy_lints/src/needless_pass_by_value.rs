@@ -81,7 +81,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
         decl: &'tcx FnDecl,
         body: &'tcx Body,
         span: Span,
-        node_id: NodeId,
+        hir_id: HirId,
     ) {
         if in_macro(span) {
             return;
@@ -103,7 +103,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
         }
 
         // Exclude non-inherent impls
-        if let Some(Node::Item(item)) = cx.tcx.hir().find(cx.tcx.hir().get_parent_node(node_id)) {
+        if let Some(Node::Item(item)) = cx
+            .tcx
+            .hir()
+            .find_by_hir_id(cx.tcx.hir().get_parent_node_by_hir_id(hir_id))
+        {
             if matches!(item.node, ItemKind::Impl(_, _, _, _, Some(_), _, _) |
                 ItemKind::Trait(..))
             {
@@ -122,7 +126,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
 
         let sized_trait = need!(cx.tcx.lang_items().sized_trait());
 
-        let fn_def_id = cx.tcx.hir().local_def_id(node_id);
+        let fn_def_id = cx.tcx.hir().local_def_id_from_hir_id(hir_id);
 
         let preds = traits::elaborate_predicates(cx.tcx, cx.param_env.caller_bounds.to_vec())
             .filter(|p| !p.is_global())
@@ -193,7 +197,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
                                 .skip(1)
                                 .cloned()
                                 .collect::<Vec<_>>();
-                            implements_trait(cx, cx.tcx.mk_imm_ref(&RegionKind::ReErased, ty), t.def_id(), ty_params)
+                            implements_trait(cx, cx.tcx.mk_imm_ref(&RegionKind::ReEmpty, ty), t.def_id(), ty_params)
                         }),
                 )
             };
@@ -234,7 +238,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
                                 .and_then(|ps| ps.args.as_ref())
                                 .map(|params| params.args.iter().find_map(|arg| match arg {
                                     GenericArg::Type(ty) => Some(ty),
-                                    GenericArg::Lifetime(_) => None,
+                                    _ => None,
                                 }).unwrap());
                             then {
                                 let slice_ty = format!("&[{}]", snippet(cx, elem_ty.span, "_"));
@@ -337,7 +341,7 @@ impl<'a, 'tcx> MovedVariablesCtxt<'a, 'tcx> {
         }
     }
 
-    fn move_common(&mut self, _consume_id: NodeId, _span: Span, cmt: &mc::cmt_<'tcx>) {
+    fn move_common(&mut self, _consume_id: HirId, _span: Span, cmt: &mc::cmt_<'tcx>) {
         let cmt = unwrap_downcast_or_interior(cmt);
 
         if let mc::Categorization::Local(vid) = cmt.cat {
@@ -395,7 +399,7 @@ impl<'a, 'tcx> MovedVariablesCtxt<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> euv::Delegate<'tcx> for MovedVariablesCtxt<'a, 'tcx> {
-    fn consume(&mut self, consume_id: NodeId, consume_span: Span, cmt: &mc::cmt_<'tcx>, mode: euv::ConsumeMode) {
+    fn consume(&mut self, consume_id: HirId, consume_span: Span, cmt: &mc::cmt_<'tcx>, mode: euv::ConsumeMode) {
         if let euv::ConsumeMode::Move(_) = mode {
             self.move_common(consume_id, consume_span, cmt);
         }
@@ -403,7 +407,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for MovedVariablesCtxt<'a, 'tcx> {
 
     fn matched_pat(&mut self, matched_pat: &Pat, cmt: &mc::cmt_<'tcx>, mode: euv::MatchMode) {
         if let euv::MatchMode::MovingMatch = mode {
-            self.move_common(matched_pat.id, matched_pat.span, cmt);
+            self.move_common(matched_pat.hir_id, matched_pat.span, cmt);
         } else {
             self.non_moving_pat(matched_pat, cmt);
         }
@@ -411,13 +415,13 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for MovedVariablesCtxt<'a, 'tcx> {
 
     fn consume_pat(&mut self, consume_pat: &Pat, cmt: &mc::cmt_<'tcx>, mode: euv::ConsumeMode) {
         if let euv::ConsumeMode::Move(_) = mode {
-            self.move_common(consume_pat.id, consume_pat.span, cmt);
+            self.move_common(consume_pat.hir_id, consume_pat.span, cmt);
         }
     }
 
     fn borrow(
         &mut self,
-        _: NodeId,
+        _: HirId,
         _: Span,
         _: &mc::cmt_<'tcx>,
         _: ty::Region<'_>,
@@ -426,7 +430,7 @@ impl<'a, 'tcx> euv::Delegate<'tcx> for MovedVariablesCtxt<'a, 'tcx> {
     ) {
     }
 
-    fn mutate(&mut self, _: NodeId, _: Span, _: &mc::cmt_<'tcx>, _: euv::MutateMode) {}
+    fn mutate(&mut self, _: HirId, _: Span, _: &mc::cmt_<'tcx>, _: euv::MutateMode) {}
 
     fn decl_without_init(&mut self, _: NodeId, _: Span) {}
 }

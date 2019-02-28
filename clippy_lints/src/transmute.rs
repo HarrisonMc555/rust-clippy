@@ -159,7 +159,8 @@ declare_clippy_lint! {
 
 /// **What it does:** Checks for transmutes from an integer to a float.
 ///
-/// **Why is this bad?** This might result in an invalid in-memory representation of a float.
+/// **Why is this bad?** Transmutes are dangerous and error-prone, whereas `from_bits` is intuitive
+/// and safe.
 ///
 /// **Known problems:** None.
 ///
@@ -497,7 +498,7 @@ fn get_type_snippet(cx: &LateContext<'_, '_>, path: &QPath, to_ref_ty: Ty<'_>) -
         if !params.parenthesized;
         if let Some(to_ty) = params.args.iter().filter_map(|arg| match arg {
             GenericArg::Type(ty) => Some(ty),
-            GenericArg::Lifetime(_) => None,
+            _ => None,
         }).nth(1);
         if let TyKind::Rptr(_, ref to_ty) = to_ty.node;
         then {

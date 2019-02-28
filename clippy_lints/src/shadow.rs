@@ -96,7 +96,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
         decl: &'tcx FnDecl,
         body: &'tcx Body,
         _: Span,
-        _: NodeId,
+        _: HirId,
     ) {
         if in_external_macro(cx.sess(), body.value.span) {
             return;
@@ -156,7 +156,7 @@ fn check_local<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, local: &'tcx Local, binding
 }
 
 fn is_binding(cx: &LateContext<'_, '_>, pat_id: HirId) -> bool {
-    let var_ty = cx.tables.node_id_to_type(pat_id);
+    let var_ty = cx.tables.node_type(pat_id);
     match var_ty.sty {
         ty::Adt(..) => false,
         _ => true,
