@@ -1,1 +1,10 @@
-error: there should be some output to this lint but there wasn't
+error: Use `x.last()` instead of `x.get(x.len() - 1)`
+  --> $DIR/use_last.rs:5:24
+   |
+LL |     let last_element = x.get(x.len() - 1); // ~ERROR Use _.last()
+   |                        ^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D clippy::use-last` implied by `-D warnings`
+
+error: aborting due to previous error
+

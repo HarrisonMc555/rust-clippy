@@ -6,7 +6,8 @@
 #![feature(stmt_expr_attributes)]
 #![feature(range_contains)]
 #![allow(clippy::missing_docs_in_private_items)]
-#![recursion_limit = "256"]
+// #![recursion_limit = "256"]
+#![recursion_limit = "512"]
 #![warn(rust_2018_idioms, trivial_casts, trivial_numeric_casts)]
 #![feature(crate_visibility_modifier)]
 
@@ -551,6 +552,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
     reg.register_late_lint_pass(box types::RefToMut);
     reg.register_late_lint_pass(box assertions_on_constants::AssertionsOnConstants);
     reg.register_late_lint_pass(box missing_const_for_fn::MissingConstForFn);
+    reg.register_late_lint_pass(box use_last::UseLast);
 
     reg.register_lint_group("clippy::restriction", Some("clippy_restriction"), vec![
         arithmetic::FLOAT_ARITHMETIC,
