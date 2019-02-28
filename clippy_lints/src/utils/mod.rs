@@ -17,14 +17,12 @@ use rustc::ty::{
     Binder, Ty, TyCtxt,
 };
 use rustc_data_structures::sync::Lrc;
-use rustc_errors::{Applicability, CodeSuggestion, Substitution, SubstitutionPart, SuggestionStyle};
+use rustc_errors::Applicability;
 use std::borrow::Cow;
-use std::env;
 use std::mem;
 use std::str::FromStr;
 use syntax::ast::{self, LitKind};
 use syntax::attr;
-use syntax::errors::DiagnosticBuilder;
 use syntax::source_map::{Span, DUMMY_SP};
 use syntax::symbol;
 use syntax::symbol::{keywords, Symbol};
@@ -35,6 +33,7 @@ pub mod author;
 pub mod comparisons;
 pub mod conf;
 pub mod constants;
+mod diagnostics;
 mod hir_utils;
 pub mod inspector;
 pub mod internal_lints;
@@ -42,6 +41,7 @@ pub mod paths;
 pub mod ptr;
 pub mod sugg;
 pub mod usage;
+pub use self::diagnostics::*;
 pub use self::hir_utils::{SpanlessEq, SpanlessHash};
 
 pub mod higher;
@@ -62,9 +62,9 @@ pub fn differing_macro_contexts(lhs: Span, rhs: Span) -> bool {
 ///     // Do something
 /// }
 /// ```
-pub fn in_constant(cx: &LateContext<'_, '_>, id: NodeId) -> bool {
-    let parent_id = cx.tcx.hir().get_parent(id);
-    match cx.tcx.hir().get(parent_id) {
+pub fn in_constant(cx: &LateContext<'_, '_>, id: HirId) -> bool {
+    let parent_id = cx.tcx.hir().get_parent_item(id);
+    match cx.tcx.hir().get_by_hir_id(parent_id) {
         Node::Item(&Item {
             node: ItemKind::Const(..),
             ..
@@ -378,8 +378,8 @@ pub fn is_entrypoint_fn(cx: &LateContext<'_, '_>, def_id: DefId) -> bool {
 
 /// Get the name of the item the expression is in, if available.
 pub fn get_item_name(cx: &LateContext<'_, '_>, expr: &Expr) -> Option<Name> {
-    let parent_id = cx.tcx.hir().get_parent(expr.id);
-    match cx.tcx.hir().find(parent_id) {
+    let parent_id = cx.tcx.hir().get_parent_item(expr.hir_id);
+    match cx.tcx.hir().find_by_hir_id(parent_id) {
         Some(Node::Item(&Item { ref ident, .. })) => Some(ident.name),
         Some(Node::TraitItem(&TraitItem { ident, .. })) | Some(Node::ImplItem(&ImplItem { ident, .. })) => {
             Some(ident.name)
@@ -571,12 +571,12 @@ fn trim_multiline_inner(s: Cow<'_, str>, ignore_first: bool, ch: char) -> Cow<'_
 /// Get a parent expressions if any – this is useful to constrain a lint.
 pub fn get_parent_expr<'c>(cx: &'c LateContext<'_, '_>, e: &Expr) -> Option<&'c Expr> {
     let map = &cx.tcx.hir();
-    let node_id: NodeId = e.id;
-    let parent_id: NodeId = map.get_parent_node(node_id);
-    if node_id == parent_id {
+    let hir_id = e.hir_id;
+    let parent_id = map.get_parent_node_by_hir_id(hir_id);
+    if hir_id == parent_id {
         return None;
     }
-    map.find(parent_id).and_then(|node| {
+    map.find_by_hir_id(parent_id).and_then(|node| {
         if let Node::Expr(parent) = node {
             Some(parent)
         } else {
@@ -585,10 +585,11 @@ pub fn get_parent_expr<'c>(cx: &'c LateContext<'_, '_>, e: &Expr) -> Option<&'c 
     })
 }
 
-pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: NodeId) -> Option<&'tcx Block> {
+pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: HirId) -> Option<&'tcx Block> {
     let map = &cx.tcx.hir();
+    let node_id = map.hir_to_node_id(node);
     let enclosing_node = map
-        .get_enclosing_scope(node)
+        .get_enclosing_scope(node_id)
         .and_then(|enclosing_id| map.find(enclosing_id));
     if let Some(node) = enclosing_node {
         match node {
@@ -609,146 +610,6 @@ pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: NodeI
     } else {
         None
     }
-}
-
-pub struct DiagnosticWrapper<'a>(pub DiagnosticBuilder<'a>);
-
-impl<'a> Drop for DiagnosticWrapper<'a> {
-    fn drop(&mut self) {
-        self.0.emit();
-    }
-}
-
-impl<'a> DiagnosticWrapper<'a> {
-    fn docs_link(&mut self, lint: &'static Lint) {
-        if env::var("CLIPPY_DISABLE_DOCS_LINKS").is_err() {
-            self.0.help(&format!(
-                "for further information visit https://rust-lang.github.io/rust-clippy/{}/index.html#{}",
-                &option_env!("RUST_RELEASE_NUM").map_or("master".to_string(), |n| {
-                    // extract just major + minor version and ignore patch versions
-                    format!("rust-{}", n.rsplitn(2, '.').nth(1).unwrap())
-                }),
-                lint.name_lower().replacen("clippy::", "", 1)
-            ));
-        }
-    }
-}
-
-pub fn span_lint<'a, T: LintContext<'a>>(cx: &T, lint: &'static Lint, sp: Span, msg: &str) {
-    DiagnosticWrapper(cx.struct_span_lint(lint, sp, msg)).docs_link(lint);
-}
-
-pub fn span_help_and_lint<'a, 'tcx: 'a, T: LintContext<'tcx>>(
-    cx: &'a T,
-    lint: &'static Lint,
-    span: Span,
-    msg: &str,
-    help: &str,
-) {
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, span, msg));
-    db.0.help(help);
-    db.docs_link(lint);
-}
-
-pub fn span_note_and_lint<'a, 'tcx: 'a, T: LintContext<'tcx>>(
-    cx: &'a T,
-    lint: &'static Lint,
-    span: Span,
-    msg: &str,
-    note_span: Span,
-    note: &str,
-) {
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, span, msg));
-    if note_span == span {
-        db.0.note(note);
-    } else {
-        db.0.span_note(note_span, note);
-    }
-    db.docs_link(lint);
-}
-
-pub fn span_lint_and_then<'a, 'tcx: 'a, T: LintContext<'tcx>, F>(
-    cx: &'a T,
-    lint: &'static Lint,
-    sp: Span,
-    msg: &str,
-    f: F,
-) where
-    F: for<'b> FnOnce(&mut DiagnosticBuilder<'b>),
-{
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, sp, msg));
-    f(&mut db.0);
-    db.docs_link(lint);
-}
-
-pub fn span_lint_node(cx: &LateContext<'_, '_>, lint: &'static Lint, node: NodeId, sp: Span, msg: &str) {
-    DiagnosticWrapper(cx.tcx.struct_span_lint_node(lint, node, sp, msg)).docs_link(lint);
-}
-
-pub fn span_lint_node_and_then(
-    cx: &LateContext<'_, '_>,
-    lint: &'static Lint,
-    node: NodeId,
-    sp: Span,
-    msg: &str,
-    f: impl FnOnce(&mut DiagnosticBuilder<'_>),
-) {
-    let mut db = DiagnosticWrapper(cx.tcx.struct_span_lint_node(lint, node, sp, msg));
-    f(&mut db.0);
-    db.docs_link(lint);
-}
-
-/// Add a span lint with a suggestion on how to fix it.
-///
-/// These suggestions can be parsed by rustfix to allow it to automatically fix your code.
-/// In the example below, `help` is `"try"` and `sugg` is the suggested replacement `".any(|x| x >
-/// 2)"`.
-///
-/// ```ignore
-/// error: This `.fold` can be more succinctly expressed as `.any`
-/// --> $DIR/methods.rs:390:13
-///     |
-/// 390 |     let _ = (0..3).fold(false, |acc, x| acc || x > 2);
-///     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `.any(|x| x > 2)`
-///     |
-///     = note: `-D fold-any` implied by `-D warnings`
-/// ```
-pub fn span_lint_and_sugg<'a, 'tcx: 'a, T: LintContext<'tcx>>(
-    cx: &'a T,
-    lint: &'static Lint,
-    sp: Span,
-    msg: &str,
-    help: &str,
-    sugg: String,
-    applicability: Applicability,
-) {
-    span_lint_and_then(cx, lint, sp, msg, |db| {
-        db.span_suggestion(sp, help, sugg, applicability);
-    });
-}
-
-/// Create a suggestion made from several `span → replacement`.
-///
-/// Note: in the JSON format (used by `compiletest_rs`), the help message will
-/// appear once per
-/// replacement. In human-readable format though, it only appears once before
-/// the whole suggestion.
-pub fn multispan_sugg<I>(db: &mut DiagnosticBuilder<'_>, help_msg: String, sugg: I)
-where
-    I: IntoIterator<Item = (Span, String)>,
-{
-    let sugg = CodeSuggestion {
-        substitutions: vec![Substitution {
-            parts: sugg
-                .into_iter()
-                .map(|(span, snippet)| SubstitutionPart { snippet, span })
-                .collect(),
-        }],
-        msg: help_msg,
-        style: SuggestionStyle::ShowCode,
-        applicability: Applicability::Unspecified,
-    };
-    db.suggestions.push(sugg);
 }
 
 /// Return the base type for HIR references and pointers.
@@ -1067,8 +928,9 @@ pub fn is_try(expr: &Expr) -> Option<&Expr> {
 /// Returns true if the lint is allowed in the current context
 ///
 /// Useful for skipping long running code when it's unnecessary
-pub fn is_allowed(cx: &LateContext<'_, '_>, lint: &'static Lint, id: NodeId) -> bool {
-    cx.tcx.lint_level_at_node(lint, id).0 == Level::Allow
+pub fn is_allowed(cx: &LateContext<'_, '_>, lint: &'static Lint, id: HirId) -> bool {
+    let node_id = cx.tcx.hir().hir_to_node_id(id);
+    cx.tcx.lint_level_at_node(lint, node_id).0 == Level::Allow
 }
 
 pub fn get_arg_name(pat: &Pat) -> Option<ast::Name> {
@@ -1141,16 +1003,16 @@ pub fn without_block_comments(lines: Vec<&str>) -> Vec<&str> {
     without
 }
 
-pub fn any_parent_is_automatically_derived(tcx: TyCtxt<'_, '_, '_>, node: NodeId) -> bool {
+pub fn any_parent_is_automatically_derived(tcx: TyCtxt<'_, '_, '_>, node: HirId) -> bool {
     let map = &tcx.hir();
     let mut prev_enclosing_node = None;
     let mut enclosing_node = node;
     while Some(enclosing_node) != prev_enclosing_node {
-        if is_automatically_derived(map.attrs(enclosing_node)) {
+        if is_automatically_derived(map.attrs_by_hir_id(enclosing_node)) {
             return true;
         }
         prev_enclosing_node = Some(enclosing_node);
-        enclosing_node = map.get_parent(enclosing_node);
+        enclosing_node = map.get_parent_item(enclosing_node);
     }
     false
 }

@@ -112,9 +112,13 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Functions {
         decl: &'tcx hir::FnDecl,
         body: &'tcx hir::Body,
         span: Span,
-        nodeid: ast::NodeId,
+        hir_id: hir::HirId,
     ) {
-        let is_impl = if let Some(hir::Node::Item(item)) = cx.tcx.hir().find(cx.tcx.hir().get_parent_node(nodeid)) {
+        let is_impl = if let Some(hir::Node::Item(item)) = cx
+            .tcx
+            .hir()
+            .find_by_hir_id(cx.tcx.hir().get_parent_node_by_hir_id(hir_id))
+        {
             matches!(item.node, hir::ItemKind::Impl(_, _, _, _, Some(_), _, _))
         } else {
             false
@@ -146,8 +150,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Functions {
             }
         }
 
+        let nodeid = cx.tcx.hir().hir_to_node_id(hir_id);
         self.check_raw_ptr(cx, unsafety, decl, body, nodeid);
-        self.check_line_number(cx, span);
+        self.check_line_number(cx, span, body);
     }
 
     fn check_trait_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::TraitItem) {
@@ -178,12 +183,12 @@ impl<'a, 'tcx> Functions {
         }
     }
 
-    fn check_line_number(self, cx: &LateContext<'_, '_>, span: Span) {
+    fn check_line_number(self, cx: &LateContext<'_, '_>, span: Span, body: &'tcx hir::Body) {
         if in_external_macro(cx.sess(), span) {
             return;
         }
 
-        let code_snippet = snippet(cx, span, "..");
+        let code_snippet = snippet(cx, body.value.span, "..");
         let mut line_count: u64 = 0;
         let mut in_comment = false;
         let mut code_in_line;
