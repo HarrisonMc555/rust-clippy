@@ -83,16 +83,16 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
 
             // LHS of subtraction is "x.len()"
             if let ExprKind::MethodCall(ref arg_lhs_path, _, ref lhs_args) = lhs.node;
-             // let _ = println!("LHS of sub is a method call");
+            // let _ = println!("LHS of sub is a method call");
             if arg_lhs_path.ident.name == "len";
             // let _ = println!("LHS of sub was method named len");
             if let Some(arg_lhs_struct) = lhs_args.get(0);
             // let _ = println!("LHS of sub method has an arg");
 
             // TODO: Is this a valid way to check if they reference the same vector?
-            if let ExprKind::Path(arg_lhs_struct_path) = arg_lhs_struct.node;
-            if let ExprKind::Path(struct_calling_on_path) = struct_calling_on.nod
-            if arg_lhs_struct_path == struct_calling_on_path;
+            // if let ExprKind::Path(arg_lhs_struct_path) = arg_lhs_struct.node;
+            // if let ExprKind::Path(struct_calling_on_path) = struct_calling_on.nod
+            // if arg_lhs_struct_path == struct_calling_on_path;
             // let _ = println!("The vector in .get and .len were the same");
 
             // RHS of subtraction is 1
@@ -120,6 +120,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
                     applicability,
                 );
             }
+            // then {
+            //     let _ = println!("got here");
+            // }
         }
     }
 }
