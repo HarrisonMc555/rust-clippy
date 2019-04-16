@@ -1,6 +1,7 @@
 //! lint on using `x.get(x.len() - 1)` instead of `x.last()`
 
-use crate::utils::{match_type, paths, span_lint_and_sugg, snippet_with_applicability};
+use crate::utils::{match_type, paths, span_lint_and_sugg,
+                   snippet_with_applicability, SpanlessEq};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_tool_lint, lint_array};
 use rustc::hir::{Expr, ExprKind};
@@ -89,11 +90,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if let Some(arg_lhs_struct) = lhs_args.get(0);
             // let _ = println!("LHS of sub method has an arg");
 
-            // TODO: Is this a valid way to check if they reference the same vector?
-            // if let ExprKind::Path(arg_lhs_struct_path) = arg_lhs_struct.node;
-            // if let ExprKind::Path(struct_calling_on_path) = struct_calling_on.nod
-            // if arg_lhs_struct_path == struct_calling_on_path;
-            // let _ = println!("The vector in .get and .len were the same");
+            if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
 
             // RHS of subtraction is 1
             if let ExprKind::Lit(ref rhs_lit) = rhs.node;
