@@ -10,12 +10,10 @@ use std::{env, fmt, fs, io, path};
 use syntax::{ast, source_map};
 use toml;
 
-/// Get the configuration file from arguments.
-pub fn file_from_args(
-    args: &[source_map::Spanned<ast::NestedMetaItemKind>],
-) -> Result<Option<path::PathBuf>, (&'static str, source_map::Span)> {
-    for arg in args.iter().filter_map(syntax::source_map::Spanned::meta_item) {
-        if arg.name() == "conf_file" {
+/// Gets the configuration file from arguments.
+pub fn file_from_args(args: &[ast::NestedMetaItem]) -> Result<Option<path::PathBuf>, (&'static str, source_map::Span)> {
+    for arg in args.iter().filter_map(syntax::ast::NestedMetaItem::meta_item) {
+        if arg.check_name("conf_file") {
             return match arg.node {
                 ast::MetaItemKind::Word | ast::MetaItemKind::List(_) => {
                     Err(("`conf_file` must be a named value", arg.span))
@@ -110,8 +108,10 @@ macro_rules! define_Conf {
 define_Conf! {
     /// Lint: BLACKLISTED_NAME. The list of blacklisted names to lint about
     (blacklisted_names, "blacklisted_names", ["foo", "bar", "baz", "quux"] => Vec<String>),
-    /// Lint: CYCLOMATIC_COMPLEXITY. The maximum cyclomatic complexity a function can have
-    (cyclomatic_complexity_threshold, "cyclomatic_complexity_threshold", 25 => u64),
+    /// Lint: COGNITIVE_COMPLEXITY. The maximum cognitive complexity a function can have
+    (cognitive_complexity_threshold, "cognitive_complexity_threshold", 25 => u64),
+    /// DEPRECATED LINT: CYCLOMATIC_COMPLEXITY. Use the Cognitive Complexity lint instead.
+    (cyclomatic_complexity_threshold, "cyclomatic_complexity_threshold", None => Option<u64>),
     /// Lint: DOC_MARKDOWN. The list of words this lint should not consider as identifiers needing ticks
     (doc_valid_idents, "doc_valid_idents", [
         "KiB", "MiB", "GiB", "TiB", "PiB", "EiB",
@@ -227,13 +227,24 @@ pub fn read(path: Option<&path::Path>) -> (Conf, Vec<Error>) {
 
     assert!(ERRORS.lock().expect("no threading -> mutex always safe").is_empty());
     match toml::from_str(&file) {
-        Ok(toml) => (
-            toml,
-            ERRORS.lock().expect("no threading -> mutex always safe").split_off(0),
-        ),
+        Ok(toml) => {
+            let mut errors = ERRORS.lock().expect("no threading -> mutex always safe").split_off(0);
+
+            let toml_ref: &Conf = &toml;
+
+            let cyc_field: Option<u64> = toml_ref.cyclomatic_complexity_threshold;
+
+            if cyc_field.is_some() {
+                let cyc_err = "found deprecated field `cyclomatic-complexity-threshold`. Please use `cognitive-complexity-threshold` instead.".to_string();
+                errors.push(Error::Toml(cyc_err));
+            }
+
+            (toml, errors)
+        },
         Err(e) => {
             let mut errors = ERRORS.lock().expect("no threading -> mutex always safe").split_off(0);
             errors.push(Error::Toml(e.to_string()));
+
             default(errors)
         },
     }

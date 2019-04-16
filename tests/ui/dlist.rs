@@ -1,4 +1,3 @@
-#![feature(alloc)]
 #![feature(associated_type_defaults)]
 #![warn(clippy::linkedlist)]
 #![allow(dead_code, clippy::needless_pass_by_value)]
@@ -12,7 +11,7 @@ trait Foo {
     const BAR: Option<LinkedList<u8>>;
 }
 
-// ok, we don’t want to warn for implementations, see #605
+// Ok, we don’t want to warn for implementations; see issue #605.
 impl Foo for LinkedList<u8> {
     fn foo(_: LinkedList<u8>) {}
     const BAR: Option<LinkedList<u8>> = None;

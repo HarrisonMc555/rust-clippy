@@ -9,22 +9,22 @@ use rustc_errors::Applicability;
 use syntax::ast::LitKind;
 use syntax_pos::symbol::Symbol;
 
-/// **What it does:** Checks slow zero-filled vector initialization
-///
-/// **Why is this bad?** These structures are non-idiomatic and less efficient than simply using
-/// `vec![0; len]`.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// let mut vec1 = Vec::with_capacity(len);
-/// vec1.resize(len, 0);
-///
-/// let mut vec2 = Vec::with_capacity(len);
-/// vec2.extend(repeat(0).take(len))
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks slow zero-filled vector initialization
+    ///
+    /// **Why is this bad?** These structures are non-idiomatic and less efficient than simply using
+    /// `vec![0; len]`.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let mut vec1 = Vec::with_capacity(len);
+    /// vec1.resize(len, 0);
+    ///
+    /// let mut vec2 = Vec::with_capacity(len);
+    /// vec2.extend(repeat(0).take(len))
+    /// ```
     pub SLOW_VECTOR_INITIALIZATION,
     perf,
     "slow vector initialization"
@@ -194,13 +194,13 @@ impl Pass {
 struct VectorInitializationVisitor<'a, 'tcx: 'a> {
     cx: &'a LateContext<'a, 'tcx>,
 
-    /// Contains the information
+    /// Contains the information.
     vec_alloc: VecAllocation<'tcx>,
 
-    /// Contains, if found, the slow initialization expression
+    /// Contains the slow initialization expression, if one was found.
     slow_expression: Option<InitializationType<'tcx>>,
 
-    /// true if the initialization of the vector has been found on the visited block
+    /// `true` if the initialization of the vector has been found on the visited block.
     initialization_found: bool,
 }
 

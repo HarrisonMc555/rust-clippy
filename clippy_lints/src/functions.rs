@@ -8,75 +8,74 @@ use rustc::ty;
 use rustc::{declare_tool_lint, lint_array};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_target::spec::abi::Abi;
-use syntax::ast;
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for functions with too many parameters.
-///
-/// **Why is this bad?** Functions with lots of parameters are considered bad
-/// style and reduce readability (“what does the 5th parameter mean?”). Consider
-/// grouping some parameters into a new type.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// fn foo(x: u32, y: u32, name: &str, c: Color, w: f32, h: f32, a: f32, b: f32) {
-///     ..
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for functions with too many parameters.
+    ///
+    /// **Why is this bad?** Functions with lots of parameters are considered bad
+    /// style and reduce readability (“what does the 5th parameter mean?”). Consider
+    /// grouping some parameters into a new type.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// fn foo(x: u32, y: u32, name: &str, c: Color, w: f32, h: f32, a: f32, b: f32) {
+    ///     ..
+    /// }
+    /// ```
     pub TOO_MANY_ARGUMENTS,
     complexity,
     "functions with too many arguments"
 }
 
-/// **What it does:** Checks for functions with a large amount of lines.
-///
-/// **Why is this bad?** Functions with a lot of lines are harder to understand
-/// due to having to look at a larger amount of code to understand what the
-/// function is doing. Consider splitting the body of the function into
-/// multiple functions.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ``` rust
-/// fn im_too_long() {
-/// println!("");
-/// // ... 100 more LoC
-/// println!("");
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for functions with a large amount of lines.
+    ///
+    /// **Why is this bad?** Functions with a lot of lines are harder to understand
+    /// due to having to look at a larger amount of code to understand what the
+    /// function is doing. Consider splitting the body of the function into
+    /// multiple functions.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ``` rust
+    /// fn im_too_long() {
+    /// println!("");
+    /// // ... 100 more LoC
+    /// println!("");
+    /// }
+    /// ```
     pub TOO_MANY_LINES,
     pedantic,
     "functions with too many lines"
 }
 
-/// **What it does:** Checks for public functions that dereferences raw pointer
-/// arguments but are not marked unsafe.
-///
-/// **Why is this bad?** The function should probably be marked `unsafe`, since
-/// for an arbitrary raw pointer, there is no way of telling for sure if it is
-/// valid.
-///
-/// **Known problems:**
-///
-/// * It does not check functions recursively so if the pointer is passed to a
-/// private non-`unsafe` function which does the dereferencing, the lint won't
-/// trigger.
-/// * It only checks for arguments whose type are raw pointers, not raw pointers
-/// got from an argument in some other way (`fn foo(bar: &[*const u8])` or
-/// `some_argument.get_raw_ptr()`).
-///
-/// **Example:**
-/// ```rust
-/// pub fn foo(x: *const u8) {
-///     println!("{}", unsafe { *x });
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for public functions that dereferences raw pointer
+    /// arguments but are not marked unsafe.
+    ///
+    /// **Why is this bad?** The function should probably be marked `unsafe`, since
+    /// for an arbitrary raw pointer, there is no way of telling for sure if it is
+    /// valid.
+    ///
+    /// **Known problems:**
+    ///
+    /// * It does not check functions recursively so if the pointer is passed to a
+    /// private non-`unsafe` function which does the dereferencing, the lint won't
+    /// trigger.
+    /// * It only checks for arguments whose type are raw pointers, not raw pointers
+    /// got from an argument in some other way (`fn foo(bar: &[*const u8])` or
+    /// `some_argument.get_raw_ptr()`).
+    ///
+    /// **Example:**
+    /// ```rust
+    /// pub fn foo(x: *const u8) {
+    ///     println!("{}", unsafe { *x });
+    /// }
+    /// ```
     pub NOT_UNSAFE_PTR_ARG_DEREF,
     correctness,
     "public functions dereferencing raw pointer arguments but not marked `unsafe`"
@@ -150,8 +149,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Functions {
             }
         }
 
-        let nodeid = cx.tcx.hir().hir_to_node_id(hir_id);
-        self.check_raw_ptr(cx, unsafety, decl, body, nodeid);
+        self.check_raw_ptr(cx, unsafety, decl, body, hir_id);
         self.check_line_number(cx, span, body);
     }
 
@@ -164,7 +162,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Functions {
 
             if let hir::TraitMethod::Provided(eid) = *eid {
                 let body = cx.tcx.hir().body(eid);
-                self.check_raw_ptr(cx, sig.header.unsafety, &sig.decl, body, item.id);
+                self.check_raw_ptr(cx, sig.header.unsafety, &sig.decl, body, item.hir_id);
             }
         }
     }
@@ -255,10 +253,10 @@ impl<'a, 'tcx> Functions {
         unsafety: hir::Unsafety,
         decl: &'tcx hir::FnDecl,
         body: &'tcx hir::Body,
-        nodeid: ast::NodeId,
+        hir_id: hir::HirId,
     ) {
         let expr = &body.value;
-        if unsafety == hir::Unsafety::Normal && cx.access_levels.is_exported(nodeid) {
+        if unsafety == hir::Unsafety::Normal && cx.access_levels.is_exported(hir_id) {
             let raw_ptrs = iter_input_pats(decl, body)
                 .zip(decl.inputs.iter())
                 .filter_map(|(arg, ty)| raw_ptr_arg(arg, ty))
@@ -278,8 +276,8 @@ impl<'a, 'tcx> Functions {
     }
 }
 
-fn raw_ptr_arg(arg: &hir::Arg, ty: &hir::Ty) -> Option<ast::NodeId> {
-    if let (&hir::PatKind::Binding(_, id, _, _, _), &hir::TyKind::Ptr(_)) = (&arg.pat.node, &ty.node) {
+fn raw_ptr_arg(arg: &hir::Arg, ty: &hir::Ty) -> Option<hir::HirId> {
+    if let (&hir::PatKind::Binding(_, id, _, _), &hir::TyKind::Ptr(_)) = (&arg.pat.node, &ty.node) {
         Some(id)
     } else {
         None
@@ -288,7 +286,7 @@ fn raw_ptr_arg(arg: &hir::Arg, ty: &hir::Ty) -> Option<ast::NodeId> {
 
 struct DerefVisitor<'a, 'tcx: 'a> {
     cx: &'a LateContext<'a, 'tcx>,
-    ptrs: FxHashSet<ast::NodeId>,
+    ptrs: FxHashSet<hir::HirId>,
     tables: &'a ty::TypeckTables<'tcx>,
 }
 
@@ -305,7 +303,7 @@ impl<'a, 'tcx> hir::intravisit::Visitor<'tcx> for DerefVisitor<'a, 'tcx> {
                 }
             },
             hir::ExprKind::MethodCall(_, _, ref args) => {
-                let def_id = self.tables.type_dependent_defs()[expr.hir_id].def_id();
+                let def_id = self.tables.type_dependent_def_id(expr.hir_id).unwrap();
                 let base_type = self.cx.tcx.type_of(def_id);
 
                 if type_is_unsafe_function(self.cx, base_type) {

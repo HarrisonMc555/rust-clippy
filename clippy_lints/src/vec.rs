@@ -8,18 +8,18 @@ use rustc::{declare_tool_lint, lint_array};
 use rustc_errors::Applicability;
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for usage of `&vec![..]` when using `&[..]` would
-/// be possible.
-///
-/// **Why is this bad?** This is less efficient.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust,ignore
-/// foo(&vec![1, 2])
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usage of `&vec![..]` when using `&[..]` would
+    /// be possible.
+    ///
+    /// **Why is this bad?** This is less efficient.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust,ignore
+    /// foo(&vec![1, 2])
+    /// ```
     pub USELESS_VEC,
     perf,
     "useless `vec!`"
@@ -59,6 +59,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             then {
                 // report the error around the `vec!` not inside `<std macros>:`
                 let span = arg.span
+                    .ctxt()
+                    .outer()
+                    .expn_info()
+                    .map(|info| info.call_site)
+                    .expect("unable to get call_site")
                     .ctxt()
                     .outer()
                     .expn_info()
@@ -106,7 +111,7 @@ fn check_vec_macro<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, vec_args: &higher::VecA
     );
 }
 
-/// Return the item type of the vector (ie. the `T` in `Vec<T>`).
+/// Returns the item type of the vector (i.e., the `T` in `Vec<T>`).
 fn vec_type(ty: Ty<'_>) -> Ty<'_> {
     if let ty::Adt(_, substs) = ty.sty {
         substs.type_at(0)

@@ -1,5 +1,3 @@
-use crate::reexport::*;
-use crate::utils::{last_path_segment, span_lint};
 use matches::matches;
 use rustc::hir::def::Def;
 use rustc::hir::intravisit::*;
@@ -10,45 +8,48 @@ use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use syntax::source_map::Span;
 use syntax::symbol::keywords;
 
-/// **What it does:** Checks for lifetime annotations which can be removed by
-/// relying on lifetime elision.
-///
-/// **Why is this bad?** The additional lifetimes make the code look more
-/// complicated, while there is nothing out of the ordinary going on. Removing
-/// them leads to more readable code.
-///
-/// **Known problems:** Potential false negatives: we bail out if the function
-/// has a `where` clause where lifetimes are mentioned.
-///
-/// **Example:**
-/// ```rust
-/// fn in_and_out<'a>(x: &'a u8, y: u8) -> &'a u8 {
-///     x
-/// }
-/// ```
+use crate::reexport::*;
+use crate::utils::{last_path_segment, span_lint};
+
 declare_clippy_lint! {
-pub NEEDLESS_LIFETIMES,
-complexity,
-"using explicit lifetimes for references in function arguments when elision rules \
- would allow omitting them"
+    /// **What it does:** Checks for lifetime annotations which can be removed by
+    /// relying on lifetime elision.
+    ///
+    /// **Why is this bad?** The additional lifetimes make the code look more
+    /// complicated, while there is nothing out of the ordinary going on. Removing
+    /// them leads to more readable code.
+    ///
+    /// **Known problems:** Potential false negatives: we bail out if the function
+    /// has a `where` clause where lifetimes are mentioned.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// fn in_and_out<'a>(x: &'a u8, y: u8) -> &'a u8 {
+    ///     x
+    /// }
+    /// ```
+    pub NEEDLESS_LIFETIMES,
+    complexity,
+    "using explicit lifetimes for references in function arguments when elision rules \
+     would allow omitting them"
 }
 
-/// **What it does:** Checks for lifetimes in generics that are never used
-/// anywhere else.
-///
-/// **Why is this bad?** The additional lifetimes make the code look more
-/// complicated, while there is nothing out of the ordinary going on. Removing
-/// them leads to more readable code.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// fn unused_lifetime<'a>(x: u8) {
-///     ..
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for lifetimes in generics that are never used
+    /// anywhere else.
+    ///
+    /// **Why is this bad?** The additional lifetimes make the code look more
+    /// complicated, while there is nothing out of the ordinary going on. Removing
+    /// them leads to more readable code.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// fn unused_lifetime<'a>(x: u8) {
+    ///     ..
+    /// }
+    /// ```
     pub EXTRA_UNUSED_LIFETIMES,
     complexity,
     "unused lifetimes in function definitions"
@@ -355,7 +356,8 @@ impl<'a, 'tcx> Visitor<'tcx> for RefVisitor<'a, 'tcx> {
                 self.collect_anonymous_lifetimes(path, ty);
             },
             TyKind::Def(item, _) => {
-                if let ItemKind::Existential(ref exist_ty) = self.cx.tcx.hir().expect_item(item.id).node {
+                let map = self.cx.tcx.hir();
+                if let ItemKind::Existential(ref exist_ty) = map.expect_item(map.hir_to_node_id(item.id)).node {
                     for bound in &exist_ty.bounds {
                         if let GenericBound::Outlives(_) = *bound {
                             self.record(&None);
@@ -384,7 +386,7 @@ impl<'a, 'tcx> Visitor<'tcx> for RefVisitor<'a, 'tcx> {
     }
 }
 
-/// Are any lifetimes mentioned in the `where` clause? If yes, we don't try to
+/// Are any lifetimes mentioned in the `where` clause? If so, we don't try to
 /// reason about elision.
 fn has_where_lifetimes<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, where_clause: &'tcx WhereClause) -> bool {
     for predicate in &where_clause.predicates {
