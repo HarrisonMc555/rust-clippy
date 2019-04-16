@@ -56,54 +56,39 @@ impl LintPass for UseLast {
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
-            // let _ = println!("Starting UseLast");
             // Is a method call
             if let ExprKind::MethodCall(ref path, _, ref args) = expr.node;
-            // let _ = println!("It is a MethodCall");
 
             // Method name is "get"
             if path.ident.name == "get";
-            // let _ = println!("The name is get");
 
             // Argument 0 (the struct we're calling the method on) is a vector
             if let Some(struct_calling_on) = args.get(0);
-            // let _ = println!("It had an argument");
             let struct_ty = cx.tables.expr_ty(struct_calling_on);
             if match_type(cx, struct_ty, &paths::VEC);
-            // let _ = println!("It was a vector");
 
             // Argument to "get" is a binary operation
             if let Some(get_index_arg) = args.get(1);
-            // let _ = println!("It had an argument");
             if let rustc::hir::ExprKind::Binary(ref op, ref lhs, ref rhs) = get_index_arg.node;
-            // let _ = println!("It was a vector");
 
             // Binary operation is a subtraction
             if op.node == rustc::hir::BinOpKind::Sub;
-            // let _ = println!("It was a subtraction");
 
             // LHS of subtraction is "x.len()"
             if let ExprKind::MethodCall(ref arg_lhs_path, _, ref lhs_args) = lhs.node;
-            // let _ = println!("LHS of sub is a method call");
             if arg_lhs_path.ident.name == "len";
-            // let _ = println!("LHS of sub was method named len");
             if let Some(arg_lhs_struct) = lhs_args.get(0);
-            // let _ = println!("LHS of sub method has an arg");
 
             if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
 
             // RHS of subtraction is 1
             if let ExprKind::Lit(ref rhs_lit) = rhs.node;
-            // let _ = println!("RHS of sub was literal");
             if let LitKind::Int(rhs_value, ..) = rhs_lit.node;
-            // let _ = println!("RHS of sub was int");
             if rhs_value == 1;
-            // let _ = println!("RHS of sub was 1");
 
             let mut applicability = Applicability::MachineApplicable;
             let vec_name = snippet_with_applicability(
                 cx, struct_calling_on.span, "x", &mut applicability);
-            // let _ = println!("About to span_lint on \"{}\"", vec_name);
 
             then {
                 span_lint_and_sugg(
@@ -117,9 +102,6 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
                     applicability,
                 );
             }
-            // then {
-            //     let _ = println!("got here");
-            // }
         }
     }
 }
