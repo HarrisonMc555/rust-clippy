@@ -1,34 +1,34 @@
-use crate::utils::sugg::Sugg;
 use if_chain::if_chain;
 use rustc::hir::def::Def;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_tool_lint, lint_array};
+use rustc_errors::Applicability;
 use syntax::ptr::P;
 
 use crate::utils::paths::*;
+use crate::utils::sugg::Sugg;
 use crate::utils::{match_def_path, match_type, span_lint_and_then, SpanlessEq};
-use rustc_errors::Applicability;
 
-/// **What it does:** Checks for expressions that could be replaced by the question mark operator
-///
-/// **Why is this bad?** Question mark usage is more idiomatic
-///
-/// **Known problems:** None
-///
-/// **Example:**
-/// ```rust
-/// if option.is_none() {
-///     return None;
-/// }
-/// ```
-///
-/// Could be written:
-///
-/// ```rust
-/// option?;
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for expressions that could be replaced by the question mark operator.
+    ///
+    /// **Why is this bad?** Question mark usage is more idiomatic.
+    ///
+    /// **Known problems:** None
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// if option.is_none() {
+    ///     return None;
+    /// }
+    /// ```
+    ///
+    /// Could be written:
+    ///
+    /// ```ignore
+    /// option?;
+    /// ```
     pub QUESTION_MARK,
     style,
     "checks for expressions that could be replaced by the question mark operator"
@@ -48,7 +48,7 @@ impl LintPass for Pass {
 }
 
 impl Pass {
-    /// Check if the given expression on the given context matches the following structure:
+    /// Checks if the given expression on the given context matches the following structure:
     ///
     /// ```ignore
     /// if option.is_none() {
@@ -128,7 +128,7 @@ impl Pass {
             },
             ExprKind::Ret(Some(ref expr)) => Self::expression_returns_none(cx, expr),
             ExprKind::Path(ref qp) => {
-                if let Def::VariantCtor(def_id, _) = cx.tables.qpath_def(qp, expression.hir_id) {
+                if let Def::Ctor(def_id, def::CtorOf::Variant, _) = cx.tables.qpath_def(qp, expression.hir_id) {
                     return match_def_path(cx.tcx, def_id, &OPTION_NONE);
                 }
 

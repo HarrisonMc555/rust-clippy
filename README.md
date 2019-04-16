@@ -107,13 +107,13 @@ script:
   - cargo clippy
   # if you want the build job to fail when encountering warnings, use
   - cargo clippy -- -D warnings
-  # in order to also check tests and none-default crate features, use
+  # in order to also check tests and non-default crate features, use
   - cargo clippy --all-targets --all-features -- -D warnings
   - cargo test
   # etc.
 ```
 
-It might happen that Clippy is not available for a certain nightly release.
+If you are on nightly, It might happen that Clippy is not available for a certain nightly release.
 In this case you can try to conditionally install Clippy from the git repo.
 
 ```yaml
@@ -125,13 +125,18 @@ before_script:
    # etc
 ```
 
+Note that adding `-D warnings` will cause your build to fail if **any** warnings are found in your code.
+That includes warnings found by rustc (e.g. `dead_code`, etc.). If you want to avoid this and only cause
+an error for clippy warnings, use `#![deny(clippy::all)]` in your code or `-D clippy::all` on the command
+line. (You can swap `clippy::all` with the specific lint category you are targeting.)
+
 ## Configuration
 
 Some lints can be configured in a TOML file named `clippy.toml` or `.clippy.toml`. It contains a basic `variable = value` mapping eg.
 
 ```toml
 blacklisted-names = ["toto", "tata", "titi"]
-cyclomatic-complexity-threshold = 30
+cognitive-complexity-threshold = 30
 ```
 
 See the [list of lints](https://rust-lang.github.io/rust-clippy/master/index.html) for more information about which lints can be configured and the

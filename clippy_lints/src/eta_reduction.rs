@@ -1,36 +1,36 @@
-use crate::utils::{is_adjusted, iter_input_pats, snippet_opt, span_lint_and_then, type_is_unsafe_function};
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
-use rustc::ty;
+use rustc::ty::{self, Ty};
 use rustc::{declare_tool_lint, lint_array};
 use rustc_errors::Applicability;
 
+use crate::utils::{is_adjusted, iter_input_pats, snippet_opt, span_lint_and_then, type_is_unsafe_function};
+
 pub struct EtaPass;
 
-/// **What it does:** Checks for closures which just call another function where
-/// the function can be called directly. `unsafe` functions or calls where types
-/// get adjusted are ignored.
-///
-/// **Why is this bad?** Needlessly creating a closure adds code for no benefit
-/// and gives the optimizer more work.
-///
-/// **Known problems:** If creating the closure inside the closure has a side-
-/// effect then moving the closure creation out will change when that side-
-/// effect runs.
-/// See https://github.com/rust-lang/rust-clippy/issues/1439 for more
-/// details.
-///
-/// **Example:**
-/// ```rust
-/// xs.map(|x| foo(x))
-/// ```
-/// where `foo(_)` is a plain function that takes the exact argument type of
-/// `x`.
 declare_clippy_lint! {
+    /// **What it does:** Checks for closures which just call another function where
+    /// the function can be called directly. `unsafe` functions or calls where types
+    /// get adjusted are ignored.
+    ///
+    /// **Why is this bad?** Needlessly creating a closure adds code for no benefit
+    /// and gives the optimizer more work.
+    ///
+    /// **Known problems:** If creating the closure inside the closure has a side-
+    /// effect then moving the closure creation out will change when that side-
+    /// effect runs.
+    /// See rust-lang/rust-clippy#1439 for more details.
+    ///
+    /// **Example:**
+    /// ```rust,ignore
+    /// xs.map(|x| foo(x))
+    /// ```
+    /// where `foo(_)` is a plain function that takes the exact argument type of
+    /// `x`.
     pub REDUNDANT_CLOSURE,
     style,
-    "redundant closures, i.e. `|a| foo(a)` (which can be written as just `foo`)"
+    "redundant closures, i.e., `|a| foo(a)` (which can be written as just `foo`)"
 }
 
 impl LintPass for EtaPass {
@@ -102,7 +102,7 @@ fn check_closure(cx: &LateContext<'_, '_>, expr: &Expr) {
             // Are the expression or the arguments type-adjusted? Then we need the closure
             if !(is_adjusted(cx, ex) || args.iter().skip(1).any(|arg| is_adjusted(cx, arg)));
 
-            let method_def_id = cx.tables.type_dependent_defs()[ex.hir_id].def_id();
+            let method_def_id = cx.tables.type_dependent_def_id(ex.hir_id).unwrap();
             if !type_is_unsafe_function(cx, cx.tcx.type_of(method_def_id));
 
             if compare_inputs(&mut iter_input_pats(decl, body), &mut args.into_iter());
@@ -129,27 +129,27 @@ fn get_ufcs_type_name(
     method_def_id: def_id::DefId,
     self_arg: &Expr,
 ) -> std::option::Option<String> {
-    let expected_type_of_self = &cx.tcx.fn_sig(method_def_id).inputs_and_output().skip_binder()[0].sty;
-    let actual_type_of_self = &cx.tables.node_type(self_arg.hir_id).sty;
+    let expected_type_of_self = &cx.tcx.fn_sig(method_def_id).inputs_and_output().skip_binder()[0];
+    let actual_type_of_self = &cx.tables.node_type(self_arg.hir_id);
 
     if let Some(trait_id) = cx.tcx.trait_of_item(method_def_id) {
-        if match_borrow_depth(expected_type_of_self, actual_type_of_self) {
-            return Some(cx.tcx.item_path_str(trait_id));
+        if match_borrow_depth(expected_type_of_self, &actual_type_of_self) {
+            return Some(cx.tcx.def_path_str(trait_id));
         }
     }
 
     cx.tcx.impl_of_method(method_def_id).and_then(|_| {
         //a type may implicitly implement other type's methods (e.g. Deref)
-        if match_types(expected_type_of_self, actual_type_of_self) {
+        if match_types(expected_type_of_self, &actual_type_of_self) {
             return Some(get_type_name(cx, &actual_type_of_self));
         }
         None
     })
 }
 
-fn match_borrow_depth(lhs: &ty::TyKind<'_>, rhs: &ty::TyKind<'_>) -> bool {
-    match (lhs, rhs) {
-        (ty::Ref(_, t1, _), ty::Ref(_, t2, _)) => match_borrow_depth(&t1.sty, &t2.sty),
+fn match_borrow_depth(lhs: Ty<'_>, rhs: Ty<'_>) -> bool {
+    match (&lhs.sty, &rhs.sty) {
+        (ty::Ref(_, t1, _), ty::Ref(_, t2, _)) => match_borrow_depth(&t1, &t2),
         (l, r) => match (l, r) {
             (ty::Ref(_, _, _), _) | (_, ty::Ref(_, _, _)) => false,
             (_, _) => true,
@@ -157,8 +157,8 @@ fn match_borrow_depth(lhs: &ty::TyKind<'_>, rhs: &ty::TyKind<'_>) -> bool {
     }
 }
 
-fn match_types(lhs: &ty::TyKind<'_>, rhs: &ty::TyKind<'_>) -> bool {
-    match (lhs, rhs) {
+fn match_types(lhs: Ty<'_>, rhs: Ty<'_>) -> bool {
+    match (&lhs.sty, &rhs.sty) {
         (ty::Bool, ty::Bool)
         | (ty::Char, ty::Char)
         | (ty::Int(_), ty::Int(_))
@@ -166,23 +166,23 @@ fn match_types(lhs: &ty::TyKind<'_>, rhs: &ty::TyKind<'_>) -> bool {
         | (ty::Str, ty::Str) => true,
         (ty::Ref(_, t1, _), ty::Ref(_, t2, _))
         | (ty::Array(t1, _), ty::Array(t2, _))
-        | (ty::Slice(t1), ty::Slice(t2)) => match_types(&t1.sty, &t2.sty),
+        | (ty::Slice(t1), ty::Slice(t2)) => match_types(t1, t2),
         (ty::Adt(def1, _), ty::Adt(def2, _)) => def1 == def2,
         (_, _) => false,
     }
 }
 
-fn get_type_name(cx: &LateContext<'_, '_>, kind: &ty::TyKind<'_>) -> String {
-    match kind {
-        ty::Adt(t, _) => cx.tcx.item_path_str(t.did),
-        ty::Ref(_, r, _) => get_type_name(cx, &r.sty),
-        _ => kind.to_string(),
+fn get_type_name(cx: &LateContext<'_, '_>, ty: Ty<'_>) -> String {
+    match ty.sty {
+        ty::Adt(t, _) => cx.tcx.def_path_str(t.did),
+        ty::Ref(_, r, _) => get_type_name(cx, &r),
+        _ => ty.to_string(),
     }
 }
 
 fn compare_inputs(closure_inputs: &mut dyn Iterator<Item = &Arg>, call_args: &mut dyn Iterator<Item = &Expr>) -> bool {
     for (closure_input, function_arg) in closure_inputs.zip(call_args) {
-        if let PatKind::Binding(_, _, _, ident, _) = closure_input.pat.node {
+        if let PatKind::Binding(_, _, ident, _) = closure_input.pat.node {
             // XXXManishearth Should I be checking the binding mode here?
             if let ExprKind::Path(QPath::Resolved(None, ref p)) = function_arg.node {
                 if p.segments.len() != 1 {

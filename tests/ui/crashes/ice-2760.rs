@@ -1,3 +1,5 @@
+// run-pass
+
 #![allow(
     unused_variables,
     clippy::blacklisted_name,
@@ -8,8 +10,7 @@
 /// This should not compile-fail with:
 ///
 ///      error[E0277]: the trait bound `T: Foo` is not satisfied
-///
-/// See https://github.com/rust-lang/rust-clippy/issues/2760
+// See rust-lang/rust-clippy#2760.
 
 trait Foo {
     type Bar;
