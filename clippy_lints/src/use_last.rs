@@ -1,57 +1,46 @@
 //! lint on using `x.get(x.len() - 1)` instead of `x.last()`
 
-use crate::utils::{match_type, paths, span_lint_and_sugg,
-                   snippet_with_applicability, SpanlessEq};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use crate::utils::{match_type, paths, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
+use if_chain::if_chain;
 use rustc::hir::{Expr, ExprKind};
+use rustc::lint::{LateContext, LateLintPass, LintPass, LintArray};
+use rustc::{declare_tool_lint, declare_lint_pass};
 use rustc_errors::Applicability;
 use syntax::ast::{LitKind};
-use if_chain::if_chain;
-
-/// **What it does:** Checks for using `x.get(x.len() - 1)` instead of `x.last()`.
-///
-/// **Why is this bad?** Using `x.last()` is easier to read and has the same result.
-///
-/// Note that using `x[x.len() - 1]` is semantically different from `x.last()`.
-/// Indexing into the array will panic on out-of-bounds accesses, while
-/// `x.get()` and `x.last()` will return `None`.
-///
-/// There is another lint (get_unwrap) that covers the case of using
-/// `x.get(index).unwrap()` instead of `x[index]`.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-///
-/// ```rust
-/// // Bad
-/// let x = vec![2, 3, 5];
-/// let last_element = x.get(x.len() - 1);
-///
-/// // Good
-/// let x = vec![2, 3, 5];
-/// let last_element = x.last();
-/// ```
 
 declare_clippy_lint! {
+    /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of
+    /// `x.last()`.
+    ///
+    /// **Why is this bad?** Using `x.last()` is easier to read and has the same
+    /// result.
+    ///
+    /// Note that using `x[x.len() - 1]` is semantically different from
+    /// `x.last()`.  Indexing into the array will panic on out-of-bounds
+    /// accesses, while `x.get()` and `x.last()` will return `None`.
+    ///
+    /// There is another lint (get_unwrap) that covers the case of using
+    /// `x.get(index).unwrap()` instead of `x[index]`.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    ///
+    /// ```rust
+    /// // Bad
+    /// let x = vec![2, 3, 5];
+    /// let last_element = x.get(x.len() - 1);
+    ///
+    /// // Good
+    /// let x = vec![2, 3, 5];
+    /// let last_element = x.last();
+    /// ```
     pub USE_LAST,
     complexity,
     "using `x.get(x.len() - 1)` instead of `x.last()`"
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct UseLast;
-
-impl LintPass for UseLast {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(USE_LAST)
-    }
-
-    fn name(&self) -> &'static str {
-        "UseLast"
-    }
-}
+declare_lint_pass!(UseLast => [USE_LAST]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
