@@ -3,10 +3,10 @@
 use crate::utils::{match_type, paths, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
 use if_chain::if_chain;
 use rustc::hir::{Expr, ExprKind};
-use rustc::lint::{LateContext, LateLintPass, LintPass, LintArray};
-use rustc::{declare_tool_lint, declare_lint_pass};
+use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
-use syntax::ast::{LitKind};
+use syntax::ast::LitKind;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of
