@@ -37,7 +37,7 @@ declare_clippy_lint! {
     /// ```
     pub USE_LAST,
     complexity,
-    "using `x.get(x.len() - 1)` instead of `x.last()`"
+    "Using `x.get(x.len() - 1)` when `x.last()` is correct and simpler"
 }
 
 declare_lint_pass!(UseLast => [USE_LAST]);
