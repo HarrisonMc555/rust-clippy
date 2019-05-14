@@ -2,11 +2,13 @@
 
 use crate::utils::{match_type, paths, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
 use if_chain::if_chain;
-use rustc::hir::{Expr, ExprKind};
+use rustc::hir::{Expr, ExprKind, BinOpKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::LitKind;
+use syntax::symbol::Symbol;
+use syntax::source_map::Spanned;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of
@@ -49,12 +51,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if let ExprKind::MethodCall(ref path, _, ref args) = expr.node;
 
             // Method name is "get"
-            if path.ident.name == "get";
+            if path.ident.name == Symbol::intern("get");
 
             // Argument 0 (the struct we're calling the method on) is a vector
             if let Some(struct_calling_on) = args.get(0);
             let struct_ty = cx.tables.expr_ty(struct_calling_on);
-            if match_type(cx, struct_ty, &paths::VEC);
+            if match_type(cx, struct_ty, &*paths::VEC);
 
             // Argument to "get" is a binary operation
             if let Some(get_index_arg) = args.get(1);
