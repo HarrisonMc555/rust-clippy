@@ -78,7 +78,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
 
             let mut applicability = Applicability::MachineApplicable;
             let vec_name = snippet_with_applicability(
-                cx, struct_calling_on.span, "x", &mut applicability);
+                cx, struct_calling_on.span, "vec", &mut applicability);
 
             then {
                 span_lint_and_sugg(
