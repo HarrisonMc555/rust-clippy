@@ -1,48 +1,38 @@
 use crate::utils::span_lint_and_sugg;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::*;
 
-/// **What it does:** Checks for fields in struct literals where shorthands
-/// could be used.
-///
-/// **Why is this bad?** If the field and variable names are the same,
-/// the field name is redundant.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// let bar: u8 = 123;
-///
-/// struct Foo {
-///     bar: u8,
-/// }
-///
-/// let foo = Foo{ bar: bar }
-/// ```
-/// the last line can be simplified to
-/// ```rust
-/// let foo = Foo{ bar }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for fields in struct literals where shorthands
+    /// could be used.
+    ///
+    /// **Why is this bad?** If the field and variable names are the same,
+    /// the field name is redundant.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let bar: u8 = 123;
+    ///
+    /// struct Foo {
+    ///     bar: u8,
+    /// }
+    ///
+    /// let foo = Foo { bar: bar };
+    /// ```
+    /// the last line can be simplified to
+    /// ```ignore
+    /// let foo = Foo { bar };
+    /// ```
     pub REDUNDANT_FIELD_NAMES,
     style,
     "checks for fields in struct literals where shorthands could be used"
 }
 
-pub struct RedundantFieldNames;
-
-impl LintPass for RedundantFieldNames {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(REDUNDANT_FIELD_NAMES)
-    }
-
-    fn name(&self) -> &'static str {
-        "RedundantFieldNames"
-    }
-}
+declare_lint_pass!(RedundantFieldNames => [REDUNDANT_FIELD_NAMES]);
 
 impl EarlyLintPass for RedundantFieldNames {
     fn check_expr(&mut self, cx: &EarlyContext<'_>, expr: &Expr) {

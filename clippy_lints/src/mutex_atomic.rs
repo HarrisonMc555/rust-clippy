@@ -6,62 +6,52 @@ use crate::utils::{match_type, paths, span_lint};
 use rustc::hir::Expr;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::ty::{self, Ty};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::ast;
 
-/// **What it does:** Checks for usages of `Mutex<X>` where an atomic will do.
-///
-/// **Why is this bad?** Using a mutex just to make access to a plain bool or
-/// reference sequential is shooting flies with cannons.
-/// `std::sync::atomic::AtomicBool` and `std::sync::atomic::AtomicPtr` are leaner and
-/// faster.
-///
-/// **Known problems:** This lint cannot detect if the mutex is actually used
-/// for waiting before a critical section.
-///
-/// **Example:**
-/// ```rust
-/// let x = Mutex::new(&y);
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usages of `Mutex<X>` where an atomic will do.
+    ///
+    /// **Why is this bad?** Using a mutex just to make access to a plain bool or
+    /// reference sequential is shooting flies with cannons.
+    /// `std::sync::atomic::AtomicBool` and `std::sync::atomic::AtomicPtr` are leaner and
+    /// faster.
+    ///
+    /// **Known problems:** This lint cannot detect if the mutex is actually used
+    /// for waiting before a critical section.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let x = Mutex::new(&y);
+    /// ```
     pub MUTEX_ATOMIC,
     perf,
     "using a mutex where an atomic value could be used instead"
 }
 
-/// **What it does:** Checks for usages of `Mutex<X>` where `X` is an integral
-/// type.
-///
-/// **Why is this bad?** Using a mutex just to make access to a plain integer
-/// sequential is
-/// shooting flies with cannons. `std::sync::atomic::AtomicUsize` is leaner and faster.
-///
-/// **Known problems:** This lint cannot detect if the mutex is actually used
-/// for waiting before a critical section.
-///
-/// **Example:**
-/// ```rust
-/// let x = Mutex::new(0usize);
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usages of `Mutex<X>` where `X` is an integral
+    /// type.
+    ///
+    /// **Why is this bad?** Using a mutex just to make access to a plain integer
+    /// sequential is
+    /// shooting flies with cannons. `std::sync::atomic::AtomicUsize` is leaner and faster.
+    ///
+    /// **Known problems:** This lint cannot detect if the mutex is actually used
+    /// for waiting before a critical section.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let x = Mutex::new(0usize);
+    /// ```
     pub MUTEX_INTEGER,
     nursery,
     "using a mutex for an integer type"
 }
 
-impl LintPass for MutexAtomic {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(MUTEX_ATOMIC, MUTEX_INTEGER)
-    }
+declare_lint_pass!(Mutex => [MUTEX_ATOMIC, MUTEX_INTEGER]);
 
-    fn name(&self) -> &'static str {
-        "Mutex"
-    }
-}
-
-pub struct MutexAtomic;
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutexAtomic {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Mutex {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         let ty = cx.tables.expr_ty(expr);
         if let ty::Adt(_, subst) = ty.sty {

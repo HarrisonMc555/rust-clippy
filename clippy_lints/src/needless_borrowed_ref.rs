@@ -6,63 +6,52 @@ use crate::utils::{in_macro, snippet, span_lint_and_then};
 use if_chain::if_chain;
 use rustc::hir::{BindingAnnotation, MutImmutable, Pat, PatKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 
-/// **What it does:** Checks for useless borrowed references.
-///
-/// **Why is this bad?** It is mostly useless and make the code look more
-/// complex than it
-/// actually is.
-///
-/// **Known problems:** It seems that the `&ref` pattern is sometimes useful.
-/// For instance in the following snippet:
-/// ```rust
-/// enum Animal {
-///     Cat(u64),
-///     Dog(u64),
-/// }
-///
-/// fn foo(a: &Animal, b: &Animal) {
-///     match (a, b) {
-/// (&Animal::Cat(v), k) | (k, &Animal::Cat(v)) => (), // lifetime
-/// mismatch error
-///         (&Animal::Dog(ref c), &Animal::Dog(_)) => ()
-///     }
-/// }
-/// ```
-/// There is a lifetime mismatch error for `k` (indeed a and b have distinct
-/// lifetime).
-/// This can be fixed by using the `&ref` pattern.
-/// However, the code can also be fixed by much cleaner ways
-///
-/// **Example:**
-/// ```rust
-/// let mut v = Vec::<String>::new();
-/// let _ = v.iter_mut().filter(|&ref a| a.is_empty());
-/// ```
-/// This closure takes a reference on something that has been matched as a
-/// reference and
-/// de-referenced.
-/// As such, it could just be |a| a.is_empty()
 declare_clippy_lint! {
+    /// **What it does:** Checks for useless borrowed references.
+    ///
+    /// **Why is this bad?** It is mostly useless and make the code look more
+    /// complex than it
+    /// actually is.
+    ///
+    /// **Known problems:** It seems that the `&ref` pattern is sometimes useful.
+    /// For instance in the following snippet:
+    /// ```rust
+    /// enum Animal {
+    ///     Cat(u64),
+    ///     Dog(u64),
+    /// }
+    ///
+    /// fn foo(a: &Animal, b: &Animal) {
+    ///     match (a, b) {
+    /// (&Animal::Cat(v), k) | (k, &Animal::Cat(v)) => (), // lifetime
+    /// mismatch error
+    ///         (&Animal::Dog(ref c), &Animal::Dog(_)) => ()
+    ///     }
+    /// }
+    /// ```
+    /// There is a lifetime mismatch error for `k` (indeed a and b have distinct
+    /// lifetime).
+    /// This can be fixed by using the `&ref` pattern.
+    /// However, the code can also be fixed by much cleaner ways
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let mut v = Vec::<String>::new();
+    /// let _ = v.iter_mut().filter(|&ref a| a.is_empty());
+    /// ```
+    /// This closure takes a reference on something that has been matched as a
+    /// reference and
+    /// de-referenced.
+    /// As such, it could just be |a| a.is_empty()
     pub NEEDLESS_BORROWED_REFERENCE,
     complexity,
     "taking a needless borrowed reference"
 }
 
-#[derive(Copy, Clone)]
-pub struct NeedlessBorrowedRef;
-
-impl LintPass for NeedlessBorrowedRef {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NEEDLESS_BORROWED_REFERENCE)
-    }
-
-    fn name(&self) -> &'static str {
-        "NeedlessBorrowedRef"
-    }
-}
+declare_lint_pass!(NeedlessBorrowedRef => [NEEDLESS_BORROWED_REFERENCE]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBorrowedRef {
     fn check_pat(&mut self, cx: &LateContext<'a, 'tcx>, pat: &'tcx Pat) {

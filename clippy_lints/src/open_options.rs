@@ -1,42 +1,33 @@
 use crate::utils::{match_type, paths, span_lint, walk_ptrs_ty};
 use rustc::hir::{Expr, ExprKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::ast::LitKind;
 use syntax::source_map::{Span, Spanned};
 
-/// **What it does:** Checks for duplicate open options as well as combinations
-/// that make no sense.
-///
-/// **Why is this bad?** In the best case, the code will be harder to read than
-/// necessary. I don't know the worst case.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// OpenOptions::new().read(true).truncate(true)
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for duplicate open options as well as combinations
+    /// that make no sense.
+    ///
+    /// **Why is this bad?** In the best case, the code will be harder to read than
+    /// necessary. I don't know the worst case.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// use std::fs::OpenOptions;
+    ///
+    /// OpenOptions::new().read(true).truncate(true);
+    /// ```
     pub NONSENSICAL_OPEN_OPTIONS,
     correctness,
     "nonsensical combination of options for opening a file"
 }
 
-#[derive(Copy, Clone)]
-pub struct NonSensical;
+declare_lint_pass!(OpenOptions => [NONSENSICAL_OPEN_OPTIONS]);
 
-impl LintPass for NonSensical {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NONSENSICAL_OPEN_OPTIONS)
-    }
-
-    fn name(&self) -> &'static str {
-        "OpenOptions"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonSensical {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for OpenOptions {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {
         if let ExprKind::MethodCall(ref path, _, ref arguments) = e.node {
             let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(&arguments[0]));

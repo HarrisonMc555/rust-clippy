@@ -14,75 +14,64 @@
 
 use if_chain::if_chain;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::ast;
 
 use crate::utils::sugg::Sugg;
 use crate::utils::{in_macro, snippet_block, snippet_block_with_applicability, span_lint_and_sugg, span_lint_and_then};
 use rustc_errors::Applicability;
 
-/// **What it does:** Checks for nested `if` statements which can be collapsed
-/// by `&&`-combining their conditions and for `else { if ... }` expressions
-/// that
-/// can be collapsed to `else if ...`.
-///
-/// **Why is this bad?** Each `if`-statement adds one level of nesting, which
-/// makes code look more complex than it really is.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust,ignore
-/// if x {
-///     if y {
-///         …
-///     }
-/// }
-///
-/// // or
-///
-/// if x {
-///     …
-/// } else {
-///     if y {
-///         …
-///     }
-/// }
-/// ```
-///
-/// Should be written:
-///
-/// ```rust.ignore
-/// if x && y {
-///     …
-/// }
-///
-/// // or
-///
-/// if x {
-///     …
-/// } else if y {
-///     …
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for nested `if` statements which can be collapsed
+    /// by `&&`-combining their conditions and for `else { if ... }` expressions
+    /// that
+    /// can be collapsed to `else if ...`.
+    ///
+    /// **Why is this bad?** Each `if`-statement adds one level of nesting, which
+    /// makes code look more complex than it really is.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust,ignore
+    /// if x {
+    ///     if y {
+    ///         …
+    ///     }
+    /// }
+    ///
+    /// // or
+    ///
+    /// if x {
+    ///     …
+    /// } else {
+    ///     if y {
+    ///         …
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Should be written:
+    ///
+    /// ```rust.ignore
+    /// if x && y {
+    ///     …
+    /// }
+    ///
+    /// // or
+    ///
+    /// if x {
+    ///     …
+    /// } else if y {
+    ///     …
+    /// }
+    /// ```
     pub COLLAPSIBLE_IF,
     style,
-    "`if`s that can be collapsed (e.g. `if x { if y { ... } }` and `else { if x { ... } }`)"
+    "`if`s that can be collapsed (e.g., `if x { if y { ... } }` and `else { if x { ... } }`)"
 }
 
-#[derive(Copy, Clone)]
-pub struct CollapsibleIf;
-
-impl LintPass for CollapsibleIf {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(COLLAPSIBLE_IF)
-    }
-
-    fn name(&self) -> &'static str {
-        "CollapsibleIf"
-    }
-}
+declare_lint_pass!(CollapsibleIf => [COLLAPSIBLE_IF]);
 
 impl EarlyLintPass for CollapsibleIf {
     fn check_expr(&mut self, cx: &EarlyContext<'_>, expr: &ast::Expr) {

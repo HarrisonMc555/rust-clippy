@@ -6,43 +6,32 @@ use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::{Name, UintTy};
 
-/// **What it does:** Checks for naive byte counts
-///
-/// **Why is this bad?** The [`bytecount`](https://crates.io/crates/bytecount)
-/// crate has methods to count your bytes faster, especially for large slices.
-///
-/// **Known problems:** If you have predominantly small slices, the
-/// `bytecount::count(..)` method may actually be slower. However, if you can
-/// ensure that less than 2³²-1 matches arise, the `naive_count_32(..)` can be
-/// faster in those cases.
-///
-/// **Example:**
-///
-/// ```rust
-/// &my_data.filter(|&x| x == 0u8).count() // use bytecount::count instead
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for naive byte counts
+    ///
+    /// **Why is this bad?** The [`bytecount`](https://crates.io/crates/bytecount)
+    /// crate has methods to count your bytes faster, especially for large slices.
+    ///
+    /// **Known problems:** If you have predominantly small slices, the
+    /// `bytecount::count(..)` method may actually be slower. However, if you can
+    /// ensure that less than 2³²-1 matches arise, the `naive_count_32(..)` can be
+    /// faster in those cases.
+    ///
+    /// **Example:**
+    ///
+    /// ```rust
+    /// &my_data.filter(|&x| x == 0u8).count() // use bytecount::count instead
+    /// ```
     pub NAIVE_BYTECOUNT,
     perf,
     "use of naive `<slice>.filter(|&x| x == y).count()` to count byte values"
 }
 
-#[derive(Copy, Clone)]
-pub struct ByteCount;
-
-impl LintPass for ByteCount {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NAIVE_BYTECOUNT)
-    }
-
-    fn name(&self) -> &'static str {
-        "ByteCount"
-    }
-}
+declare_lint_pass!(ByteCount => [NAIVE_BYTECOUNT]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ByteCount {
     fn check_expr(&mut self, cx: &LateContext<'_, '_>, expr: &Expr) {
@@ -86,7 +75,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ByteCount {
                         } else {
                             &filter_args[0]
                         };
-                        let mut applicability = Applicability::MachineApplicable;
+                        let mut applicability = Applicability::MaybeIncorrect;
                         span_lint_and_sugg(
                             cx,
                             NAIVE_BYTECOUNT,

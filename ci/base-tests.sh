@@ -4,7 +4,7 @@ echo "Running clippy base tests"
 
 PATH=$PATH:./node_modules/.bin
 if [ "$TRAVIS_OS_NAME" == "linux" ]; then
-  remark -f *.md > /dev/null
+  remark -f *.md -f doc/*.md > /dev/null
 fi
 # build clippy in debug mode and run tests
 cargo build --features debugging
@@ -59,7 +59,9 @@ rustup override set nightly
 # avoid loop spam and allow cmds with exit status != 0
 set +ex
 
-for file in `find tests -not -path "tests/ui/doc.rs" -not -path "tests/ui/unused_unit.rs" | grep "\.rs$"` ; do
+# Excluding `ice-3891.rs` because the code triggers a rustc parse error which
+# makes rustfmt fail.
+for file in `find tests -not -path "tests/ui/crashes/ice-3891.rs" | grep "\.rs$"` ; do
   rustfmt ${file} --check
   if [ $? -ne 0 ]; then
     echo "${file} needs reformatting!"

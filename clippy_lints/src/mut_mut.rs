@@ -3,38 +3,27 @@ use rustc::hir;
 use rustc::hir::intravisit;
 use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
 use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Checks for instances of `mut mut` references.
-///
-/// **Why is this bad?** Multiple `mut`s don't add anything meaningful to the
-/// source. This is either a copy'n'paste error, or it shows a fundamental
-/// misunderstanding of references.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// let x = &mut &mut y;
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for instances of `mut mut` references.
+    ///
+    /// **Why is this bad?** Multiple `mut`s don't add anything meaningful to the
+    /// source. This is either a copy'n'paste error, or it shows a fundamental
+    /// misunderstanding of references.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let x = &mut &mut y;
+    /// ```
     pub MUT_MUT,
     pedantic,
-    "usage of double-mut refs, e.g. `&mut &mut ...`"
+    "usage of double-mut refs, e.g., `&mut &mut ...`"
 }
 
-#[derive(Copy, Clone)]
-pub struct MutMut;
-
-impl LintPass for MutMut {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(MUT_MUT)
-    }
-
-    fn name(&self) -> &'static str {
-        "MutMut"
-    }
-}
+declare_lint_pass!(MutMut => [MUT_MUT]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutMut {
     fn check_block(&mut self, cx: &LateContext<'a, 'tcx>, block: &'tcx hir::Block) {

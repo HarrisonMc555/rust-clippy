@@ -3,57 +3,46 @@ use matches::matches;
 use rustc::hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Checks for `if` conditions that use blocks to contain an
-/// expression.
-///
-/// **Why is this bad?** It isn't really Rust style, same as using parentheses
-/// to contain expressions.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// if { true } ..
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for `if` conditions that use blocks to contain an
+    /// expression.
+    ///
+    /// **Why is this bad?** It isn't really Rust style, same as using parentheses
+    /// to contain expressions.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// if { true } { /* ... */ }
+    /// ```
     pub BLOCK_IN_IF_CONDITION_EXPR,
     style,
-    "braces that can be eliminated in conditions, e.g. `if { true } ...`"
+    "braces that can be eliminated in conditions, e.g., `if { true } ...`"
 }
 
-/// **What it does:** Checks for `if` conditions that use blocks containing
-/// statements, or conditions that use closures with blocks.
-///
-/// **Why is this bad?** Using blocks in the condition makes it hard to read.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// if { let x = somefunc(); x } ..
-/// // or
-/// if somefunc(|x| { x == 47 }) ..
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for `if` conditions that use blocks containing
+    /// statements, or conditions that use closures with blocks.
+    ///
+    /// **Why is this bad?** Using blocks in the condition makes it hard to read.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// if { let x = somefunc(); x } {}
+    /// // or
+    /// if somefunc(|x| { x == 47 }) {}
+    /// ```
     pub BLOCK_IN_IF_CONDITION_STMT,
     style,
-    "complex blocks in conditions, e.g. `if { let x = true; x } ...`"
+    "complex blocks in conditions, e.g., `if { let x = true; x } ...`"
 }
 
-#[derive(Copy, Clone)]
-pub struct BlockInIfCondition;
-
-impl LintPass for BlockInIfCondition {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(BLOCK_IN_IF_CONDITION_EXPR, BLOCK_IN_IF_CONDITION_STMT)
-    }
-
-    fn name(&self) -> &'static str {
-        "BlockInIfCondition"
-    }
-}
+declare_lint_pass!(BlockInIfCondition => [BLOCK_IN_IF_CONDITION_EXPR, BLOCK_IN_IF_CONDITION_STMT]);
 
 struct ExVisitor<'a, 'tcx: 'a> {
     found_block: Option<&'tcx Expr>,

@@ -6,66 +6,55 @@ use crate::utils::sugg::Sugg;
 use crate::utils::{in_macro, span_lint, span_lint_and_sugg};
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::LitKind;
 use syntax::source_map::Spanned;
 
-/// **What it does:** Checks for expressions of the form `if c { true } else {
-/// false }`
-/// (or vice versa) and suggest using the condition directly.
-///
-/// **Why is this bad?** Redundant code.
-///
-/// **Known problems:** Maybe false positives: Sometimes, the two branches are
-/// painstakingly documented (which we of course do not detect), so they *may*
-/// have some value. Even then, the documentation can be rewritten to match the
-/// shorter code.
-///
-/// **Example:**
-/// ```rust
-/// if x {
-///     false
-/// } else {
-///     true
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for expressions of the form `if c { true } else {
+    /// false }`
+    /// (or vice versa) and suggest using the condition directly.
+    ///
+    /// **Why is this bad?** Redundant code.
+    ///
+    /// **Known problems:** Maybe false positives: Sometimes, the two branches are
+    /// painstakingly documented (which we of course do not detect), so they *may*
+    /// have some value. Even then, the documentation can be rewritten to match the
+    /// shorter code.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// if x {
+    ///     false
+    /// } else {
+    ///     true
+    /// }
+    /// ```
     pub NEEDLESS_BOOL,
     complexity,
-    "if-statements with plain booleans in the then- and else-clause, e.g. `if p { true } else { false }`"
+    "if-statements with plain booleans in the then- and else-clause, e.g., `if p { true } else { false }`"
 }
 
-/// **What it does:** Checks for expressions of the form `x == true`,
-/// `x != true` and order comparisons such as `x < true` (or vice versa) and
-/// suggest using the variable directly.
-///
-/// **Why is this bad?** Unnecessary code.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// if x == true {} // could be `if x { }`
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for expressions of the form `x == true`,
+    /// `x != true` and order comparisons such as `x < true` (or vice versa) and
+    /// suggest using the variable directly.
+    ///
+    /// **Why is this bad?** Unnecessary code.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// if x == true {} // could be `if x { }`
+    /// ```
     pub BOOL_COMPARISON,
     complexity,
-    "comparing a variable to a boolean, e.g. `if x == true` or `if x != true`"
+    "comparing a variable to a boolean, e.g., `if x == true` or `if x != true`"
 }
 
-#[derive(Copy, Clone)]
-pub struct NeedlessBool;
-
-impl LintPass for NeedlessBool {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NEEDLESS_BOOL)
-    }
-
-    fn name(&self) -> &'static str {
-        "NeedlessBool"
-    }
-}
+declare_lint_pass!(NeedlessBool => [NEEDLESS_BOOL]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBool {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {
@@ -138,18 +127,7 @@ fn parent_node_is_if_expr<'a, 'b>(expr: &Expr, cx: &LateContext<'a, 'b>) -> bool
     false
 }
 
-#[derive(Copy, Clone)]
-pub struct BoolComparison;
-
-impl LintPass for BoolComparison {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(BOOL_COMPARISON)
-    }
-
-    fn name(&self) -> &'static str {
-        "BoolComparison"
-    }
-}
+declare_lint_pass!(BoolComparison => [BOOL_COMPARISON]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BoolComparison {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {

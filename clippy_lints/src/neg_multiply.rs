@@ -1,40 +1,29 @@
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::source_map::{Span, Spanned};
 
 use crate::consts::{self, Constant};
 use crate::utils::span_lint;
 
-/// **What it does:** Checks for multiplication by -1 as a form of negation.
-///
-/// **Why is this bad?** It's more readable to just negate.
-///
-/// **Known problems:** This only catches integers (for now).
-///
-/// **Example:**
-/// ```rust
-/// x * -1
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for multiplication by -1 as a form of negation.
+    ///
+    /// **Why is this bad?** It's more readable to just negate.
+    ///
+    /// **Known problems:** This only catches integers (for now).
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// x * -1
+    /// ```
     pub NEG_MULTIPLY,
     style,
     "multiplying integers with -1"
 }
 
-#[derive(Copy, Clone)]
-pub struct NegMultiply;
-
-impl LintPass for NegMultiply {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NEG_MULTIPLY)
-    }
-
-    fn name(&self) -> &'static str {
-        "NegMultiply"
-    }
-}
+declare_lint_pass!(NegMultiply => [NEG_MULTIPLY]);
 
 #[allow(clippy::match_same_arms)]
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NegMultiply {

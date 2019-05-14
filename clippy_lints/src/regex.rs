@@ -1,88 +1,80 @@
 use crate::consts::{constant, Constant};
-use crate::utils::{is_expn_of, match_def_path, match_type, opt_def_id, paths, span_help_and_lint, span_lint};
+use crate::utils::{is_expn_of, match_type, paths, span_help_and_lint, span_lint};
 use if_chain::if_chain;
 use regex_syntax;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_tool_lint, impl_lint_pass};
 use rustc_data_structures::fx::FxHashSet;
 use std::convert::TryFrom;
 use syntax::ast::{LitKind, StrStyle};
 use syntax::source_map::{BytePos, Span};
 
-/// **What it does:** Checks [regex](https://crates.io/crates/regex) creation
-/// (with `Regex::new`,`RegexBuilder::new` or `RegexSet::new`) for correct
-/// regex syntax.
-///
-/// **Why is this bad?** This will lead to a runtime panic.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// Regex::new("|")
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks [regex](https://crates.io/crates/regex) creation
+    /// (with `Regex::new`,`RegexBuilder::new` or `RegexSet::new`) for correct
+    /// regex syntax.
+    ///
+    /// **Why is this bad?** This will lead to a runtime panic.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// Regex::new("|")
+    /// ```
     pub INVALID_REGEX,
     correctness,
     "invalid regular expressions"
 }
 
-/// **What it does:** Checks for trivial [regex](https://crates.io/crates/regex)
-/// creation (with `Regex::new`, `RegexBuilder::new` or `RegexSet::new`).
-///
-/// **Why is this bad?** Matching the regex can likely be replaced by `==` or
-/// `str::starts_with`, `str::ends_with` or `std::contains` or other `str`
-/// methods.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// Regex::new("^foobar")
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for trivial [regex](https://crates.io/crates/regex)
+    /// creation (with `Regex::new`, `RegexBuilder::new` or `RegexSet::new`).
+    ///
+    /// **Why is this bad?** Matching the regex can likely be replaced by `==` or
+    /// `str::starts_with`, `str::ends_with` or `std::contains` or other `str`
+    /// methods.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// Regex::new("^foobar")
+    /// ```
     pub TRIVIAL_REGEX,
     style,
     "trivial regular expressions"
 }
 
-/// **What it does:** Checks for usage of `regex!(_)` which (as of now) is
-/// usually slower than `Regex::new(_)` unless called in a loop (which is a bad
-/// idea anyway).
-///
-/// **Why is this bad?** Performance, at least for now. The macro version is
-/// likely to catch up long-term, but for now the dynamic version is faster.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// regex!("foo|bar")
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usage of `regex!(_)` which (as of now) is
+    /// usually slower than `Regex::new(_)` unless called in a loop (which is a bad
+    /// idea anyway).
+    ///
+    /// **Why is this bad?** Performance, at least for now. The macro version is
+    /// likely to catch up long-term, but for now the dynamic version is faster.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// regex!("foo|bar")
+    /// ```
     pub REGEX_MACRO,
     style,
     "use of `regex!(_)` instead of `Regex::new(_)`"
 }
 
 #[derive(Clone, Default)]
-pub struct Pass {
+pub struct Regex {
     spans: FxHashSet<Span>,
     last: Option<HirId>,
 }
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(INVALID_REGEX, REGEX_MACRO, TRIVIAL_REGEX)
-    }
+impl_lint_pass!(Regex => [INVALID_REGEX, REGEX_MACRO, TRIVIAL_REGEX]);
 
-    fn name(&self) -> &'static str {
-        "Regex"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Regex {
     fn check_crate(&mut self, _: &LateContext<'a, 'tcx>, _: &'tcx Crate) {
         self.spans.clear();
     }
@@ -118,17 +110,17 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             if let ExprKind::Call(ref fun, ref args) = expr.node;
             if let ExprKind::Path(ref qpath) = fun.node;
             if args.len() == 1;
-            if let Some(def_id) = opt_def_id(cx.tables.qpath_def(qpath, fun.hir_id));
+            if let Some(def_id) = cx.tables.qpath_def(qpath, fun.hir_id).opt_def_id();
             then {
-                if match_def_path(cx.tcx, def_id, &paths::REGEX_NEW) ||
-                   match_def_path(cx.tcx, def_id, &paths::REGEX_BUILDER_NEW) {
+                if cx.match_def_path(def_id, &paths::REGEX_NEW) ||
+                   cx.match_def_path(def_id, &paths::REGEX_BUILDER_NEW) {
                     check_regex(cx, &args[0], true);
-                } else if match_def_path(cx.tcx, def_id, &paths::REGEX_BYTES_NEW) ||
-                   match_def_path(cx.tcx, def_id, &paths::REGEX_BYTES_BUILDER_NEW) {
+                } else if cx.match_def_path(def_id, &paths::REGEX_BYTES_NEW) ||
+                   cx.match_def_path(def_id, &paths::REGEX_BYTES_BUILDER_NEW) {
                     check_regex(cx, &args[0], false);
-                } else if match_def_path(cx.tcx, def_id, &paths::REGEX_SET_NEW) {
+                } else if cx.match_def_path(def_id, &paths::REGEX_SET_NEW) {
                     check_set(cx, &args[0], true);
-                } else if match_def_path(cx.tcx, def_id, &paths::REGEX_BYTES_SET_NEW) {
+                } else if cx.match_def_path(def_id, &paths::REGEX_BYTES_SET_NEW) {
                     check_set(cx, &args[0], false);
                 }
             }

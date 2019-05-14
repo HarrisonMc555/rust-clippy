@@ -1,5 +1,3 @@
-#![allow(clippy::default_hash_types)]
-
 use itertools::Itertools;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -12,8 +10,9 @@ use walkdir::WalkDir;
 lazy_static! {
     static ref DEC_CLIPPY_LINT_RE: Regex = Regex::new(
         r#"(?x)
-        declare_clippy_lint!\s*[\{(]\s*
-        pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
+        declare_clippy_lint!\s*[\{(]
+        (?:\s+///.*)*
+        \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
         (?P<cat>[a-z_]+)\s*,\s*
         "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
     "#
@@ -22,7 +21,8 @@ lazy_static! {
     static ref DEC_DEPRECATED_LINT_RE: Regex = Regex::new(
         r#"(?x)
         declare_deprecated_lint!\s*[{(]\s*
-        pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
+        (?:\s+///.*)*
+        \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
         "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
     "#
     )
@@ -189,7 +189,7 @@ pub struct FileChange {
     pub new_lines: String,
 }
 
-/// Replace a region in a file delimited by two lines matching regexes.
+/// Replaces a region in a file delimited by two lines matching regexes.
 ///
 /// `path` is the relative path to the file on which you want to perform the replacement.
 ///
@@ -223,7 +223,7 @@ where
     file_change
 }
 
-/// Replace a region in a text delimited by two lines matching regexes.
+/// Replaces a region in a text delimited by two lines matching regexes.
 ///
 /// * `text` is the input text on which you want to perform the replacement
 /// * `start` is a `&str` that describes the delimiter line before the region you want to replace.

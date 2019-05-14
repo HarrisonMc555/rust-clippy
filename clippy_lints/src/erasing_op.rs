@@ -1,42 +1,33 @@
-use crate::consts::{constant_simple, Constant};
-use crate::utils::{in_macro, span_lint};
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for erasing operations, e.g. `x * 0`.
-///
-/// **Why is this bad?** The whole expression can be replaced by zero.
-/// This is most likely not the intended outcome and should probably be
-/// corrected
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// 0 / x;
-/// 0 * x;
-/// x & 0
-/// ```
+use crate::consts::{constant_simple, Constant};
+use crate::utils::{in_macro, span_lint};
+
 declare_clippy_lint! {
+    /// **What it does:** Checks for erasing operations, e.g., `x * 0`.
+    ///
+    /// **Why is this bad?** The whole expression can be replaced by zero.
+    /// This is most likely not the intended outcome and should probably be
+    /// corrected
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let x = 1;
+    /// 0 / x;
+    /// 0 * x;
+    /// x & 0;
+    /// ```
     pub ERASING_OP,
     correctness,
-    "using erasing operations, e.g. `x * 0` or `y & 0`"
+    "using erasing operations, e.g., `x * 0` or `y & 0`"
 }
 
-#[derive(Copy, Clone)]
-pub struct ErasingOp;
-
-impl LintPass for ErasingOp {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(ERASING_OP)
-    }
-
-    fn name(&self) -> &'static str {
-        "ErasingOp"
-    }
-}
+declare_lint_pass!(ErasingOp => [ERASING_OP]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ErasingOp {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {

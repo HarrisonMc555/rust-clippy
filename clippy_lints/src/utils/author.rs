@@ -7,58 +7,48 @@ use rustc::hir::intravisit::{NestedVisitorMap, Visitor};
 use rustc::hir::{BindingAnnotation, Expr, ExprKind, Pat, PatKind, QPath, Stmt, StmtKind, TyKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintContext, LintPass};
 use rustc::session::Session;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_data_structures::fx::FxHashMap;
 use syntax::ast::{Attribute, LitKind};
 
-/// **What it does:** Generates clippy code that detects the offending pattern
-///
-/// **Example:**
-/// ```rust
-/// // ./tests/ui/my_lint.rs
-/// fn foo() {
-///     // detect the following pattern
-///     #[clippy::author]
-///     if x == 42 {
-///         // but ignore everything from here on
-///         #![clippy::author = "ignore"]
-///     }
-/// }
-/// ```
-///
-/// Running `TESTNAME=ui/my_lint cargo uitest` will produce
-/// a `./tests/ui/new_lint.stdout` file with the generated code:
-///
-/// ```rust
-/// // ./tests/ui/new_lint.stdout
-/// if_chain! {
-///     if let ExprKind::If(ref cond, ref then, None) = item.node,
-///     if let ExprKind::Binary(BinOp::Eq, ref left, ref right) = cond.node,
-///     if let ExprKind::Path(ref path) = left.node,
-///     if let ExprKind::Lit(ref lit) = right.node,
-///     if let LitKind::Int(42, _) = lit.node,
-///     then {
-///         // report your lint here
-///     }
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Generates clippy code that detects the offending pattern
+    ///
+    /// **Example:**
+    /// ```rust
+    /// // ./tests/ui/my_lint.rs
+    /// fn foo() {
+    ///     // detect the following pattern
+    ///     #[clippy::author]
+    ///     if x == 42 {
+    ///         // but ignore everything from here on
+    ///         #![clippy::author = "ignore"]
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Running `TESTNAME=ui/my_lint cargo uitest` will produce
+    /// a `./tests/ui/new_lint.stdout` file with the generated code:
+    ///
+    /// ```rust
+    /// // ./tests/ui/new_lint.stdout
+    /// if_chain! {
+    ///     if let ExprKind::If(ref cond, ref then, None) = item.node,
+    ///     if let ExprKind::Binary(BinOp::Eq, ref left, ref right) = cond.node,
+    ///     if let ExprKind::Path(ref path) = left.node,
+    ///     if let ExprKind::Lit(ref lit) = right.node,
+    ///     if let LitKind::Int(42, _) = lit.node,
+    ///     then {
+    ///         // report your lint here
+    ///     }
+    /// }
+    /// ```
     pub LINT_AUTHOR,
     internal_warn,
     "helper for writing lints"
 }
 
-pub struct Pass;
-
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(LINT_AUTHOR)
-    }
-
-    fn name(&self) -> &'static str {
-        "Author"
-    }
-}
+declare_lint_pass!(Author => [LINT_AUTHOR]);
 
 fn prelude() {
     println!("if_chain! {{");
@@ -71,7 +61,7 @@ fn done() {
     println!("}}");
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
     fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::Item) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
@@ -639,7 +629,7 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 println!("Local(ref {}) = {};", local_pat, current);
                 if let Some(ref init) = local.init {
                     let init_pat = self.next("init");
-                    println!("    if let Some(ref {}) = {}.init", init_pat, local_pat);
+                    println!("    if let Some(ref {}) = {}.init;", init_pat, local_pat);
                     self.current = init_pat;
                     self.visit_expr(init);
                 }

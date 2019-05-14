@@ -1,3 +1,5 @@
+// run-rustfix
+
 #![allow(
     unused,
     clippy::no_effect,

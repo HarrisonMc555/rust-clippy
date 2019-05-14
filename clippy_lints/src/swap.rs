@@ -7,61 +7,52 @@ use matches::matches;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 
-/// **What it does:** Checks for manual swapping.
-///
-/// **Why is this bad?** The `std::mem::swap` function exposes the intent better
-/// without deinitializing or copying either variable.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust,ignore
-/// let t = b;
-/// b = a;
-/// a = t;
-/// ```
-/// Use std::mem::swap():
-/// ```rust
-/// std::mem::swap(&mut a, &mut b);
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for manual swapping.
+    ///
+    /// **Why is this bad?** The `std::mem::swap` function exposes the intent better
+    /// without deinitializing or copying either variable.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let t = b;
+    /// b = a;
+    /// a = t;
+    /// ```
+    /// Use std::mem::swap():
+    /// ```rust
+    /// std::mem::swap(&mut a, &mut b);
+    /// ```
     pub MANUAL_SWAP,
     complexity,
     "manual swap of two variables"
 }
 
-/// **What it does:** Checks for `foo = bar; bar = foo` sequences.
-///
-/// **Why is this bad?** This looks like a failed attempt to swap.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust,ignore
-/// a = b;
-/// b = a;
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for `foo = bar; bar = foo` sequences.
+    ///
+    /// **Why is this bad?** This looks like a failed attempt to swap.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// # let mut a = 1;
+    /// # let mut b = 2;
+    /// a = b;
+    /// b = a;
+    /// ```
     pub ALMOST_SWAPPED,
     correctness,
     "`foo = bar; bar = foo` sequence"
 }
 
-#[derive(Copy, Clone)]
-pub struct Swap;
-
-impl LintPass for Swap {
-    fn get_lints(&self) -> LintArray {
-        lint_array![MANUAL_SWAP, ALMOST_SWAPPED]
-    }
-
-    fn name(&self) -> &'static str {
-        "Swap"
-    }
-}
+declare_lint_pass!(Swap => [MANUAL_SWAP, ALMOST_SWAPPED]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Swap {
     fn check_block(&mut self, cx: &LateContext<'a, 'tcx>, block: &'tcx Block) {

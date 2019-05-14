@@ -2,37 +2,26 @@ use crate::utils::{span_lint, SpanlessEq};
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Detects classic underflow/overflow checks.
-///
-/// **Why is this bad?** Most classic C underflow/overflow checks will fail in
-/// Rust. Users can use functions like `overflowing_*` and `wrapping_*` instead.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// a + b < a
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Detects classic underflow/overflow checks.
+    ///
+    /// **Why is this bad?** Most classic C underflow/overflow checks will fail in
+    /// Rust. Users can use functions like `overflowing_*` and `wrapping_*` instead.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// a + b < a
+    /// ```
     pub OVERFLOW_CHECK_CONDITIONAL,
     complexity,
     "overflow checks inspired by C which are likely to panic"
 }
 
-#[derive(Copy, Clone)]
-pub struct OverflowCheckConditional;
-
-impl LintPass for OverflowCheckConditional {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(OVERFLOW_CHECK_CONDITIONAL)
-    }
-
-    fn name(&self) -> &'static str {
-        "OverflowCheckConditional"
-    }
-}
+declare_lint_pass!(OverflowCheckConditional => [OVERFLOW_CHECK_CONDITIONAL]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for OverflowCheckConditional {
     // a + b < a, a > a + b, a < a - b, a - b > a

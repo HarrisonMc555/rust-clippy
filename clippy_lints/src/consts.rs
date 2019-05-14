@@ -1,6 +1,6 @@
 #![allow(clippy::float_cmp)]
 
-use crate::utils::{clip, get_def_path, sext, unsext};
+use crate::utils::{clip, sext, unsext};
 use if_chain::if_chain;
 use rustc::hir::def::Def;
 use rustc::hir::*;
@@ -16,32 +16,34 @@ use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use syntax::ast::{FloatTy, LitKind};
 use syntax::ptr::P;
-use syntax_pos::symbol::Symbol;
+use syntax_pos::symbol::{LocalInternedString, Symbol};
 
 /// A `LitKind`-like enum to fold constant `Expr`s into.
 #[derive(Debug, Clone)]
 pub enum Constant {
-    /// a String "abc"
+    /// A `String` (e.g., "abc").
     Str(String),
-    /// a Binary String b"abc"
+    /// A binary string (e.g., `b"abc"`).
     Binary(Lrc<Vec<u8>>),
-    /// a single char 'a'
+    /// A single `char` (e.g., `'a'`).
     Char(char),
-    /// an integer's bit representation
+    /// An integer's bit representation.
     Int(u128),
-    /// an f32
+    /// An `f32`.
     F32(f32),
-    /// an f64
+    /// An `f64`.
     F64(f64),
-    /// true or false
+    /// `true` or `false`.
     Bool(bool),
-    /// an array of constants
+    /// An array of constants.
     Vec(Vec<Constant>),
-    /// also an array, but with only one constant, repeated N times
+    /// Also an array, but with only one constant, repeated N times.
     Repeat(Box<Constant>, u64),
-    /// a tuple of constants
+    /// A tuple of constants.
     Tuple(Vec<Constant>),
-    /// a literal with syntax error
+    /// A raw pointer.
+    RawPtr(u128),
+    /// A literal with syntax error.
     Err(Symbol),
 }
 
@@ -53,15 +55,15 @@ impl PartialEq for Constant {
             (&Constant::Char(l), &Constant::Char(r)) => l == r,
             (&Constant::Int(l), &Constant::Int(r)) => l == r,
             (&Constant::F64(l), &Constant::F64(r)) => {
-                // we want `Fw32 == FwAny` and `FwAny == Fw64`, by transitivity we must have
-                // `Fw32 == Fw64` so don’t compare them
-                // to_bits is required to catch non-matching 0.0, -0.0, and NaNs
+                // We want `Fw32 == FwAny` and `FwAny == Fw64`, and by transitivity we must have
+                // `Fw32 == Fw64`, so don’t compare them.
+                // `to_bits` is required to catch non-matching 0.0, -0.0, and NaNs.
                 l.to_bits() == r.to_bits()
             },
             (&Constant::F32(l), &Constant::F32(r)) => {
-                // we want `Fw32 == FwAny` and `FwAny == Fw64`, by transitivity we must have
-                // `Fw32 == Fw64` so don’t compare them
-                // to_bits is required to catch non-matching 0.0, -0.0, and NaNs
+                // We want `Fw32 == FwAny` and `FwAny == Fw64`, and by transitivity we must have
+                // `Fw32 == Fw64`, so don’t compare them.
+                // `to_bits` is required to catch non-matching 0.0, -0.0, and NaNs.
                 f64::from(l).to_bits() == f64::from(r).to_bits()
             },
             (&Constant::Bool(l), &Constant::Bool(r)) => l == r,
@@ -69,7 +71,8 @@ impl PartialEq for Constant {
                 l == r
             },
             (&Constant::Repeat(ref lv, ref ls), &Constant::Repeat(ref rv, ref rs)) => ls == rs && lv == rv,
-            _ => false, // TODO: Are there inter-type equalities?
+            // TODO: are there inter-type equalities?
+            _ => false,
         }
     }
 }
@@ -108,6 +111,9 @@ impl Hash for Constant {
                 c.hash(state);
                 l.hash(state);
             },
+            Constant::RawPtr(u) => {
+                u.hash(state);
+            },
             Constant::Err(ref s) => {
                 s.hash(state);
             },
@@ -116,7 +122,7 @@ impl Hash for Constant {
 }
 
 impl Constant {
-    pub fn partial_cmp(tcx: TyCtxt<'_, '_, '_>, cmp_type: ty::Ty<'_>, left: &Self, right: &Self) -> Option<Ordering> {
+    pub fn partial_cmp(tcx: TyCtxt<'_, '_, '_>, cmp_type: Ty<'_>, left: &Self, right: &Self) -> Option<Ordering> {
         match (left, right) {
             (&Constant::Str(ref ls), &Constant::Str(ref rs)) => Some(ls.cmp(rs)),
             (&Constant::Char(ref l), &Constant::Char(ref r)) => Some(l.cmp(r)),
@@ -142,12 +148,13 @@ impl Constant {
                     x => x,
                 }
             },
-            _ => None, // TODO: Are there any useful inter-type orderings?
+            // TODO: are there any useful inter-type orderings?
+            _ => None,
         }
     }
 }
 
-/// parse a `LitKind` to a `Constant`
+/// Parses a `LitKind` to a `Constant`.
 pub fn lit_to_constant<'tcx>(lit: &LitKind, ty: Ty<'tcx>) -> Constant {
     use syntax::ast::*;
 
@@ -173,7 +180,7 @@ pub fn constant<'c, 'cc>(
     e: &Expr,
 ) -> Option<(Constant, bool)> {
     let mut cx = ConstEvalLateContext {
-        tcx: lcx.tcx,
+        lcx,
         tables,
         param_env: lcx.param_env,
         needed_resolution: false,
@@ -190,13 +197,13 @@ pub fn constant_simple<'c, 'cc>(
     constant(lcx, tables, e).and_then(|(cst, res)| if res { None } else { Some(cst) })
 }
 
-/// Creates a `ConstEvalLateContext` from the given `LateContext` and `TypeckTables`
+/// Creates a `ConstEvalLateContext` from the given `LateContext` and `TypeckTables`.
 pub fn constant_context<'c, 'cc>(
-    lcx: &LateContext<'c, 'cc>,
+    lcx: &'c LateContext<'c, 'cc>,
     tables: &'c ty::TypeckTables<'cc>,
 ) -> ConstEvalLateContext<'c, 'cc> {
     ConstEvalLateContext {
-        tcx: lcx.tcx,
+        lcx,
         tables,
         param_env: lcx.param_env,
         needed_resolution: false,
@@ -205,7 +212,7 @@ pub fn constant_context<'c, 'cc>(
 }
 
 pub struct ConstEvalLateContext<'a, 'tcx: 'a> {
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    lcx: &'a LateContext<'a, 'tcx>,
     tables: &'a ty::TypeckTables<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
     needed_resolution: bool,
@@ -213,7 +220,7 @@ pub struct ConstEvalLateContext<'a, 'tcx: 'a> {
 }
 
 impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
-    /// simple constant folding: Insert an expression, get a constant or none.
+    /// Simple constant folding: Insert an expression, get a constant or none.
     pub fn expr(&mut self, e: &Expr) -> Option<Constant> {
         match e.node {
             ExprKind::Path(ref qpath) => self.fetch_path(qpath, e.hir_id),
@@ -224,7 +231,7 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
             ExprKind::Tup(ref tup) => self.multi(tup).map(Constant::Tuple),
             ExprKind::Repeat(ref value, _) => {
                 let n = match self.tables.expr_ty(e).sty {
-                    ty::Array(_, n) => n.assert_usize(self.tcx).expect("array length"),
+                    ty::Array(_, n) => n.assert_usize(self.lcx.tcx).expect("array length"),
                     _ => span_bug!(e.span, "typeck error"),
                 };
                 self.expr(value).map(|v| Constant::Repeat(Box::new(v), n))
@@ -236,13 +243,16 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
             }),
             ExprKind::Binary(op, ref left, ref right) => self.binop(op, left, right),
             ExprKind::Call(ref callee, ref args) => {
-                // We only handle a few const functions for now
+                // We only handle a few const functions for now.
                 if_chain! {
                     if args.is_empty();
                     if let ExprKind::Path(qpath) = &callee.node;
                     let def = self.tables.qpath_def(qpath, callee.hir_id);
                     if let Some(def_id) = def.opt_def_id();
-                    let def_path = get_def_path(self.tcx, def_id);
+                    let def_path = self.lcx.get_def_path(def_id)
+                        .iter()
+                        .map(LocalInternedString::get)
+                        .collect::<Vec<_>>();
                     if let &["core", "num", impl_ty, "max_value"] = &def_path[..];
                     then {
                        let value = match impl_ty {
@@ -260,21 +270,21 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
                     }
                 }
             },
-            // TODO: add other expressions
+            // TODO: add other expressions.
             _ => None,
         }
     }
 
     #[allow(clippy::cast_possible_wrap)]
-    fn constant_not(&self, o: &Constant, ty: ty::Ty<'_>) -> Option<Constant> {
+    fn constant_not(&self, o: &Constant, ty: Ty<'_>) -> Option<Constant> {
         use self::Constant::*;
         match *o {
             Bool(b) => Some(Bool(!b)),
             Int(value) => {
                 let value = !value;
                 match ty.sty {
-                    ty::Int(ity) => Some(Int(unsext(self.tcx, value as i128, ity))),
-                    ty::Uint(ity) => Some(Int(clip(self.tcx, value, ity))),
+                    ty::Int(ity) => Some(Int(unsext(self.lcx.tcx, value as i128, ity))),
+                    ty::Uint(ity) => Some(Int(clip(self.lcx.tcx, value, ity))),
                     _ => None,
                 }
             },
@@ -282,7 +292,7 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
         }
     }
 
-    fn constant_negate(&self, o: &Constant, ty: ty::Ty<'_>) -> Option<Constant> {
+    fn constant_negate(&self, o: &Constant, ty: Ty<'_>) -> Option<Constant> {
         use self::Constant::*;
         match *o {
             Int(value) => {
@@ -291,10 +301,10 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
                     _ => return None,
                 };
                 // sign extend
-                let value = sext(self.tcx, value, ity);
+                let value = sext(self.lcx.tcx, value, ity);
                 let value = value.checked_neg()?;
                 // clear unused bits
-                Some(Int(unsext(self.tcx, value, ity)))
+                Some(Int(unsext(self.lcx.tcx, value, ity)))
             },
             F32(f) => Some(F32(-f)),
             F64(f) => Some(F64(-f)),
@@ -302,13 +312,13 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
         }
     }
 
-    /// create `Some(Vec![..])` of all constants, unless there is any
-    /// non-constant part
+    /// Create `Some(Vec![..])` of all constants, unless there is any
+    /// non-constant part.
     fn multi(&mut self, vec: &[Expr]) -> Option<Vec<Constant>> {
         vec.iter().map(|elem| self.expr(elem)).collect::<Option<_>>()
     }
 
-    /// lookup a possibly constant expression from a ExprKind::Path
+    /// Lookup a possibly constant expression from a ExprKind::Path.
     fn fetch_path(&mut self, qpath: &QPath, id: HirId) -> Option<Constant> {
         use rustc::mir::interpret::GlobalId;
 
@@ -319,27 +329,27 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
                 let substs = if self.substs.is_empty() {
                     substs
                 } else {
-                    substs.subst(self.tcx, self.substs)
+                    substs.subst(self.lcx.tcx, self.substs)
                 };
-                let instance = Instance::resolve(self.tcx, self.param_env, def_id, substs)?;
+                let instance = Instance::resolve(self.lcx.tcx, self.param_env, def_id, substs)?;
                 let gid = GlobalId {
                     instance,
                     promoted: None,
                 };
 
-                let result = self.tcx.const_eval(self.param_env.and(gid)).ok()?;
-                let ret = miri_to_const(self.tcx, &result);
+                let result = self.lcx.tcx.const_eval(self.param_env.and(gid)).ok()?;
+                let ret = miri_to_const(self.lcx.tcx, &result);
                 if ret.is_some() {
                     self.needed_resolution = true;
                 }
-                return ret;
+                ret
             },
-            _ => {},
+            // FIXME: cover all useable cases.
+            _ => None,
         }
-        None
     }
 
-    /// A block can only yield a constant if it only has one constant expression
+    /// A block can only yield a constant if it only has one constant expression.
     fn block(&mut self, block: &Block) -> Option<Constant> {
         if block.stmts.is_empty() {
             block.expr.as_ref().and_then(|b| self.expr(b))
@@ -366,9 +376,9 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
         match (l, r) {
             (Constant::Int(l), Some(Constant::Int(r))) => match self.tables.expr_ty(left).sty {
                 ty::Int(ity) => {
-                    let l = sext(self.tcx, l, ity);
-                    let r = sext(self.tcx, r, ity);
-                    let zext = |n: i128| Constant::Int(unsext(self.tcx, n, ity));
+                    let l = sext(self.lcx.tcx, l, ity);
+                    let r = sext(self.lcx.tcx, r, ity);
+                    let zext = |n: i128| Constant::Int(unsext(self.lcx.tcx, n, ity));
                     match op.node {
                         BinOpKind::Add => l.checked_add(r).map(zext),
                         BinOpKind::Sub => l.checked_sub(r).map(zext),
@@ -465,7 +475,13 @@ pub fn miri_to_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, result: &ty::Const<'
             ty::Float(FloatTy::F64) => Some(Constant::F64(f64::from_bits(
                 b.try_into().expect("invalid f64 bit representation"),
             ))),
-            // FIXME: implement other conversion
+            ty::RawPtr(type_and_mut) => {
+                if let ty::Uint(_) = type_and_mut.ty.sty {
+                    return Some(Constant::RawPtr(b));
+                }
+                None
+            },
+            // FIXME: implement other conversions.
             _ => None,
         },
         ConstValue::Slice(Scalar::Ptr(ptr), n) => match result.ty.sty {
@@ -482,7 +498,7 @@ pub fn miri_to_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, result: &ty::Const<'
             },
             _ => None,
         },
-        // FIXME: implement other conversions
+        // FIXME: implement other conversions.
         _ => None,
     }
 }
