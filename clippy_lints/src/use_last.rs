@@ -2,13 +2,13 @@
 
 use crate::utils::{match_type, paths, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
 use if_chain::if_chain;
-use rustc::hir::{Expr, ExprKind, BinOpKind};
+use rustc::hir::{BinOpKind, Expr, ExprKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::LitKind;
-use syntax::symbol::Symbol;
 use syntax::source_map::Spanned;
+use syntax::symbol::Symbol;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of
@@ -68,6 +68,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if arg_lhs_path.ident.name == Symbol::intern("len");
             if let Some(arg_lhs_struct) = lhs_args.get(0);
 
+            // The two vectors referenced (x in x.get(...) and in x.len())
             if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
 
             // RHS of subtraction is 1
