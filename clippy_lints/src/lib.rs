@@ -6,10 +6,11 @@
 #![feature(slice_patterns)]
 #![feature(stmt_expr_attributes)]
 #![allow(clippy::missing_docs_in_private_items)]
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 #![warn(rust_2018_idioms, trivial_casts, trivial_numeric_casts)]
 #![deny(internal)]
 #![feature(crate_visibility_modifier)]
+#![feature(concat_idents)]
 
 // FIXME: switch to something more ergonomic here, once available.
 // (Currently there is no way to opt into sysroot crates without `extern crate`.)
@@ -624,6 +625,8 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         loops::EXPLICIT_ITER_LOOP,
         matches::SINGLE_MATCH_ELSE,
         methods::FILTER_MAP,
+        methods::FILTER_MAP_NEXT,
+        methods::FIND_MAP,
         methods::MAP_FLATTEN,
         methods::OPTION_MAP_UNWRAP_OR,
         methods::OPTION_MAP_UNWRAP_OR_ELSE,

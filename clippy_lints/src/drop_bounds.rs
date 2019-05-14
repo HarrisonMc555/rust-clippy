@@ -1,4 +1,4 @@
-use crate::utils::{paths, span_lint};
+use crate::utils::{match_def_path, paths, span_lint};
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateLintPass, LintArray, LintPass};
@@ -55,8 +55,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DropBounds {
 fn lint_bound<'a, 'tcx>(cx: &rustc::lint::LateContext<'a, 'tcx>, bound: &'tcx GenericBound) {
     if_chain! {
         if let GenericBound::Trait(t, _) = bound;
-        if let Some(def_id) = t.trait_ref.path.def.opt_def_id();
-        if cx.match_def_path(def_id, &paths::DROP_TRAIT);
+        if let Some(def_id) = t.trait_ref.path.res.opt_def_id();
+        if match_def_path(cx, def_id, &*paths::DROP_TRAIT);
         then {
             span_lint(
                 cx,

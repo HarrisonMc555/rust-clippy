@@ -1,14 +1,16 @@
-use crate::utils::{iter_input_pats, snippet, span_lint, type_is_unsafe_function};
+use std::convert::TryFrom;
+
+use crate::utils::{iter_input_pats, snippet, snippet_opt, span_lint, type_is_unsafe_function};
 use matches::matches;
 use rustc::hir;
-use rustc::hir::def::Def;
+use rustc::hir::def::Res;
 use rustc::hir::intravisit;
 use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
 use rustc::ty;
 use rustc::{declare_tool_lint, impl_lint_pass};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_target::spec::abi::Abi;
-use syntax::source_map::Span;
+use syntax::source_map::{BytePos, Span};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for functions with too many parameters.
@@ -162,6 +164,19 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Functions {
 
 impl<'a, 'tcx> Functions {
     fn check_arg_number(self, cx: &LateContext<'_, '_>, decl: &hir::FnDecl, span: Span) {
+        // Remove the function body from the span. We can't use `SourceMap::def_span` because the
+        // argument list might span multiple lines.
+        let span = if let Some(snippet) = snippet_opt(cx, span) {
+            let snippet = snippet.split('{').nth(0).unwrap_or("").trim_end();
+            if snippet.is_empty() {
+                span
+            } else {
+                span.with_hi(BytePos(span.lo().0 + u32::try_from(snippet.len()).unwrap()))
+            }
+        } else {
+            span
+        };
+
         let args = decl.inputs.len() as u64;
         if args > self.threshold {
             span_lint(
@@ -318,7 +333,7 @@ impl<'a, 'tcx> hir::intravisit::Visitor<'tcx> for DerefVisitor<'a, 'tcx> {
 impl<'a, 'tcx: 'a> DerefVisitor<'a, 'tcx> {
     fn check_arg(&self, ptr: &hir::Expr) {
         if let hir::ExprKind::Path(ref qpath) = ptr.node {
-            if let Def::Local(id) = self.cx.tables.qpath_def(qpath, ptr.hir_id) {
+            if let Res::Local(id) = self.cx.tables.qpath_res(qpath, ptr.hir_id) {
                 if self.ptrs.contains(&id) {
                     span_lint(
                         self.cx,

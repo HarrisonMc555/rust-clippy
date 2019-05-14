@@ -1,5 +1,6 @@
+use crate::utils::sym;
 use crate::utils::SpanlessEq;
-use crate::utils::{get_item_name, match_type, paths, snippet, span_lint_and_then, walk_ptrs_ty};
+use crate::utils::{get_item_name, higher, match_type, paths, snippet, span_lint_and_then, walk_ptrs_ty};
 use if_chain::if_chain;
 use rustc::hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
 use rustc::hir::*;
@@ -41,7 +42,7 @@ declare_lint_pass!(HashMapPass => [MAP_ENTRY]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for HashMapPass {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
-        if let ExprKind::If(ref check, ref then_block, ref else_block) = expr.node {
+        if let Some((ref check, ref then_block, ref else_block)) = higher::if_block(&expr) {
             if let ExprKind::Unary(UnOp::UnNot, ref check) = check.node {
                 if let Some((ty, map, key)) = check_cond(cx, check) {
                     // in case of `if !m.contains_key(&k) { m.insert(k, v); }`
@@ -91,16 +92,16 @@ fn check_cond<'a, 'tcx, 'b>(
     if_chain! {
         if let ExprKind::MethodCall(ref path, _, ref params) = check.node;
         if params.len() >= 2;
-        if path.ident.name == "contains_key";
+        if path.ident.name == *sym::contains_key;
         if let ExprKind::AddrOf(_, ref key) = params[1].node;
         then {
             let map = &params[0];
             let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(map));
 
-            return if match_type(cx, obj_ty, &paths::BTREEMAP) {
+            return if match_type(cx, obj_ty, &*paths::BTREEMAP) {
                 Some(("BTreeMap", map, key))
             }
-            else if match_type(cx, obj_ty, &paths::HASHMAP) {
+            else if match_type(cx, obj_ty, &*paths::HASHMAP) {
                 Some(("HashMap", map, key))
             }
             else {
@@ -126,7 +127,7 @@ impl<'a, 'tcx, 'b> Visitor<'tcx> for InsertVisitor<'a, 'tcx, 'b> {
         if_chain! {
             if let ExprKind::MethodCall(ref path, _, ref params) = expr.node;
             if params.len() == 3;
-            if path.ident.name == "insert";
+            if path.ident.name == *sym::insert;
             if get_item_name(self.cx, self.map) == get_item_name(self.cx, &params[0]);
             if SpanlessEq::new(self.cx).eq_expr(self.key, &params[1]);
             then {

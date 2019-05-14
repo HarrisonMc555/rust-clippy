@@ -2,7 +2,10 @@ use if_chain::if_chain;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_lint_pass, declare_tool_lint};
 
-use crate::utils::{in_macro, match_type, paths, span_lint_and_then, usage::is_potentially_mutated};
+use crate::utils::sym;
+use crate::utils::{
+    higher::if_block, in_macro_or_desugar, match_type, paths, span_lint_and_then, usage::is_potentially_mutated,
+};
 use rustc::hir::intravisit::*;
 use rustc::hir::*;
 use syntax::source_map::Span;
@@ -93,7 +96,7 @@ fn collect_unwrap_info<'a, 'tcx: 'a>(
             if let ExprKind::MethodCall(method_name, _, args) = &expr.node;
             if let ExprKind::Path(QPath::Resolved(None, path)) = &args[0].node;
             let ty = cx.tables.expr_ty(&args[0]);
-            if match_type(cx, ty, &paths::OPTION) || match_type(cx, ty, &paths::RESULT);
+            if match_type(cx, ty, &*paths::OPTION) || match_type(cx, ty, &*paths::RESULT);
             let name = method_name.ident.as_str();
             if ["is_some", "is_none", "is_ok", "is_err"].contains(&&*name);
             then {
@@ -130,7 +133,7 @@ impl<'a, 'tcx: 'a> UnwrappableVariablesVisitor<'a, 'tcx> {
 
 impl<'a, 'tcx: 'a> Visitor<'tcx> for UnwrappableVariablesVisitor<'a, 'tcx> {
     fn visit_expr(&mut self, expr: &'tcx Expr) {
-        if let ExprKind::If(cond, then, els) = &expr.node {
+        if let Some((cond, then, els)) = if_block(&expr) {
             walk_expr(self, cond);
             self.visit_branch(cond, then, false);
             if let Some(els) = els {
@@ -141,10 +144,10 @@ impl<'a, 'tcx: 'a> Visitor<'tcx> for UnwrappableVariablesVisitor<'a, 'tcx> {
             if_chain! {
                 if let ExprKind::MethodCall(ref method_name, _, ref args) = expr.node;
                 if let ExprKind::Path(QPath::Resolved(None, ref path)) = args[0].node;
-                if ["unwrap", "unwrap_err"].contains(&&*method_name.ident.as_str());
-                let call_to_unwrap = method_name.ident.name == "unwrap";
+                if [*sym::unwrap, *sym::unwrap_err].contains(&method_name.ident.name);
+                let call_to_unwrap = method_name.ident.name == *sym::unwrap;
                 if let Some(unwrappable) = self.unwrappables.iter()
-                    .find(|u| u.ident.def == path.def);
+                    .find(|u| u.ident.res == path.res);
                 then {
                     if call_to_unwrap == unwrappable.safe_to_unwrap {
                         span_lint_and_then(
@@ -189,7 +192,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Unwrap {
         span: Span,
         fn_id: HirId,
     ) {
-        if in_macro(span) {
+        if in_macro_or_desugar(span) {
             return;
         }
 

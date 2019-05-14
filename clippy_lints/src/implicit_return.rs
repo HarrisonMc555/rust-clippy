@@ -1,4 +1,5 @@
-use crate::utils::{in_macro, is_expn_of, snippet_opt, span_lint_and_then};
+use crate::utils::sym;
+use crate::utils::{in_macro_or_desugar, is_expn_of, snippet_opt, span_lint_and_then};
 use rustc::hir::{intravisit::FnKind, Body, ExprKind, FnDecl, HirId, MatchSource};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_lint_pass, declare_tool_lint};
@@ -74,13 +75,6 @@ impl ImplicitReturn {
                     Self::lint(cx, expr.span, break_expr.span, "change `break` to `return` as shown");
                 }
             },
-            ExprKind::If(.., if_expr, else_expr) => {
-                Self::expr_match(cx, if_expr);
-
-                if let Some(else_expr) = else_expr {
-                    Self::expr_match(cx, else_expr);
-                }
-            },
             ExprKind::Match(.., arms, source) => {
                 let check_all_arms = match source {
                     MatchSource::IfLetDesugar {
@@ -102,7 +96,7 @@ impl ImplicitReturn {
             // everything else is missing `return`
             _ => {
                 // make sure it's not just an unreachable expression
-                if is_expn_of(expr.span, "unreachable").is_none() {
+                if is_expn_of(expr.span, *sym::unreachable).is_none() {
                     Self::lint(cx, expr.span, expr.span, "add `return` as shown")
                 }
             },
@@ -125,7 +119,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ImplicitReturn {
 
         // checking return type through MIR, HIR is not able to determine inferred closure return types
         // make sure it's not a macro
-        if !mir.return_ty().is_unit() && !in_macro(span) {
+        if !mir.return_ty().is_unit() && !in_macro_or_desugar(span) {
             Self::expr_match(cx, &body.value);
         }
     }

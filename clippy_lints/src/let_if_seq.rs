@@ -1,7 +1,7 @@
-use crate::utils::{snippet, span_lint_and_then};
+use crate::utils::{higher, snippet, span_lint_and_then};
 use if_chain::if_chain;
 use rustc::hir;
-use rustc::hir::def::Def;
+use rustc::hir::def::Res;
 use rustc::hir::BindingAnnotation;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::{declare_lint_pass, declare_tool_lint};
@@ -63,13 +63,20 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for LetIfSeq {
                 if let hir::StmtKind::Local(ref local) = stmt.node;
                 if let hir::PatKind::Binding(mode, canonical_id, ident, None) = local.pat.node;
                 if let hir::StmtKind::Expr(ref if_) = expr.node;
-                if let hir::ExprKind::If(ref cond, ref then, ref else_) = if_.node;
+                if let Some((ref cond, ref then, ref else_)) = higher::if_block(&if_);
                 if !used_in_expr(cx, canonical_id, cond);
                 if let hir::ExprKind::Block(ref then, _) = then.node;
                 if let Some(value) = check_assign(cx, canonical_id, &*then);
                 if !used_in_expr(cx, canonical_id, value);
                 then {
                     let span = stmt.span.to(if_.span);
+
+                    let has_interior_mutability = !cx.tables.node_type(canonical_id).is_freeze(
+                        cx.tcx,
+                        cx.param_env,
+                        span
+                    );
+                    if has_interior_mutability { return; }
 
                     let (default_multi_stmts, default) = if let Some(ref else_) = *else_ {
                         if let hir::ExprKind::Block(ref else_, _) = else_.node {
@@ -138,7 +145,7 @@ impl<'a, 'tcx> hir::intravisit::Visitor<'tcx> for UsedVisitor<'a, 'tcx> {
     fn visit_expr(&mut self, expr: &'tcx hir::Expr) {
         if_chain! {
             if let hir::ExprKind::Path(ref qpath) = expr.node;
-            if let Def::Local(local_id) = self.cx.tables.qpath_def(qpath, expr.hir_id);
+            if let Res::Local(local_id) = self.cx.tables.qpath_res(qpath, expr.hir_id);
             if self.id == local_id;
             then {
                 self.used = true;
@@ -163,7 +170,7 @@ fn check_assign<'a, 'tcx>(
         if let hir::StmtKind::Semi(ref expr) = expr.node;
         if let hir::ExprKind::Assign(ref var, ref value) = expr.node;
         if let hir::ExprKind::Path(ref qpath) = var.node;
-        if let Def::Local(local_id) = cx.tables.qpath_def(qpath, var.hir_id);
+        if let Res::Local(local_id) = cx.tables.qpath_res(qpath, var.hir_id);
         if decl == local_id;
         then {
             let mut v = UsedVisitor {

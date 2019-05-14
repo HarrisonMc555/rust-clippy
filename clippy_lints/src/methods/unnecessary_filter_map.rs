@@ -2,7 +2,7 @@ use crate::utils::paths;
 use crate::utils::usage::mutated_variables;
 use crate::utils::{match_qpath, match_trait_method, span_lint};
 use rustc::hir;
-use rustc::hir::def::Def;
+use rustc::hir::def::Res;
 use rustc::hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
 use rustc::lint::LateContext;
 
@@ -11,7 +11,7 @@ use if_chain::if_chain;
 use super::UNNECESSARY_FILTER_MAP;
 
 pub(super) fn lint(cx: &LateContext<'_, '_>, expr: &hir::Expr, args: &[hir::Expr]) {
-    if !match_trait_method(cx, expr, &paths::ITERATOR) {
+    if !match_trait_method(cx, expr, &*paths::ITERATOR) {
         return;
     }
 
@@ -63,10 +63,10 @@ fn check_expression<'a, 'tcx: 'a>(
             if_chain! {
                 if let hir::ExprKind::Path(ref path) = func.node;
                 then {
-                    if match_qpath(path, &paths::OPTION_SOME) {
+                    if match_qpath(path, &*paths::OPTION_SOME) {
                         if_chain! {
                             if let hir::ExprKind::Path(path) = &args[0].node;
-                            if let Def::Local(ref local) = cx.tables.qpath_def(path, args[0].hir_id);
+                            if let Res::Local(ref local) = cx.tables.qpath_res(path, args[0].hir_id);
                             then {
                                 if arg_id == *local {
                                     return (false, false)
@@ -89,12 +89,6 @@ fn check_expression<'a, 'tcx: 'a>(
                 (false, false)
             }
         },
-        // There must be an else_arm or there will be a type error
-        hir::ExprKind::If(_, ref if_arm, Some(ref else_arm)) => {
-            let if_check = check_expression(cx, arg_id, if_arm);
-            let else_check = check_expression(cx, arg_id, else_arm);
-            (if_check.0 | else_check.0, if_check.1 | else_check.1)
-        },
         hir::ExprKind::Match(_, ref arms, _) => {
             let mut found_mapping = false;
             let mut found_filtering = false;
@@ -105,7 +99,7 @@ fn check_expression<'a, 'tcx: 'a>(
             }
             (found_mapping, found_filtering)
         },
-        hir::ExprKind::Path(path) if match_qpath(path, &paths::OPTION_NONE) => (false, true),
+        hir::ExprKind::Path(path) if match_qpath(path, &*paths::OPTION_NONE) => (false, true),
         _ => (true, true),
     }
 }
