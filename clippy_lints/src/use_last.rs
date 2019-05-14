@@ -61,10 +61,10 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             // Argument to "get" is a subtraction
             if let Some(get_index_arg) = args.get(1);
             if let ExprKind::Binary(Spanned{node: BinOpKind::Sub, span: _},
-                                    ref lhs, ref rhs) = get_index_arg.node;
+                                    lhs, rhs) = &get_index_arg.node;
 
             // LHS of subtraction is "x.len()"
-            if let ExprKind::MethodCall(ref arg_lhs_path, _, ref lhs_args) = lhs.node;
+            if let ExprKind::MethodCall(arg_lhs_path, _, lhs_args) = &lhs.node;
             if arg_lhs_path.ident.name == Symbol::intern("len");
             if let Some(arg_lhs_struct) = lhs_args.get(0);
 
@@ -72,7 +72,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
 
             // RHS of subtraction is 1
-            if let ExprKind::Lit(ref rhs_lit) = rhs.node;
+            if let ExprKind::Lit(rhs_lit) = &rhs.node;
             if let LitKind::Int(rhs_value, ..) = rhs_lit.node;
             if rhs_value == 1;
 
