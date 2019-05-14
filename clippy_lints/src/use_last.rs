@@ -58,16 +58,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             let struct_ty = cx.tables.expr_ty(struct_calling_on);
             if match_type(cx, struct_ty, &*paths::VEC);
 
-            // Argument to "get" is a binary operation
+            // Argument to "get" is a subtraction
             if let Some(get_index_arg) = args.get(1);
-            if let rustc::hir::ExprKind::Binary(ref op, ref lhs, ref rhs) = get_index_arg.node;
-
-            // Binary operation is a subtraction
-            if op.node == rustc::hir::BinOpKind::Sub;
+            if let ExprKind::Binary(Spanned{node: BinOpKind::Sub, span: _},
+                                    ref lhs, ref rhs) = get_index_arg.node;
 
             // LHS of subtraction is "x.len()"
             if let ExprKind::MethodCall(ref arg_lhs_path, _, ref lhs_args) = lhs.node;
-            if arg_lhs_path.ident.name == "len";
+            if arg_lhs_path.ident.name == Symbol::intern("len");
             if let Some(arg_lhs_struct) = lhs_args.get(0);
 
             if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
