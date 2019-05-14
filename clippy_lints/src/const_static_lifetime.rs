@@ -1,42 +1,32 @@
 use crate::utils::{in_macro, snippet, span_lint_and_then};
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::*;
 
-/// **What it does:** Checks for constants with an explicit `'static` lifetime.
-///
-/// **Why is this bad?** Adding `'static` to every reference can create very
-/// complicated types.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// const FOO: &'static [(&'static str, &'static str, fn(&Bar) -> bool)] =
-/// &[...]
-/// ```
-/// This code can be rewritten as
-/// ```rust
-///  const FOO: &[(&str, &str, fn(&Bar) -> bool)] = &[...]
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for constants with an explicit `'static` lifetime.
+    ///
+    /// **Why is this bad?** Adding `'static` to every reference can create very
+    /// complicated types.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// const FOO: &'static [(&'static str, &'static str, fn(&Bar) -> bool)] =
+    /// &[...]
+    /// ```
+    /// This code can be rewritten as
+    /// ```ignore
+    ///  const FOO: &[(&str, &str, fn(&Bar) -> bool)] = &[...]
+    /// ```
     pub CONST_STATIC_LIFETIME,
     style,
     "Using explicit `'static` lifetime for constants when elision rules would allow omitting them."
 }
 
-pub struct StaticConst;
-
-impl LintPass for StaticConst {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(CONST_STATIC_LIFETIME)
-    }
-
-    fn name(&self) -> &'static str {
-        "StaticConst"
-    }
-}
+declare_lint_pass!(StaticConst => [CONST_STATIC_LIFETIME]);
 
 impl StaticConst {
     // Recursively visit types

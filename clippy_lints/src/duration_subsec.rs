@@ -1,7 +1,7 @@
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::source_map::Spanned;
 
@@ -9,38 +9,27 @@ use crate::consts::{constant, Constant};
 use crate::utils::paths;
 use crate::utils::{match_type, snippet_with_applicability, span_lint_and_sugg, walk_ptrs_ty};
 
-/// **What it does:** Checks for calculation of subsecond microseconds or milliseconds
-/// from other `Duration` methods.
-///
-/// **Why is this bad?** It's more concise to call `Duration::subsec_micros()` or
-/// `Duration::subsec_millis()` than to calculate them.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// let dur = Duration::new(5, 0);
-/// let _micros = dur.subsec_nanos() / 1_000;
-/// let _millis = dur.subsec_nanos() / 1_000_000;
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for calculation of subsecond microseconds or milliseconds
+    /// from other `Duration` methods.
+    ///
+    /// **Why is this bad?** It's more concise to call `Duration::subsec_micros()` or
+    /// `Duration::subsec_millis()` than to calculate them.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// let dur = Duration::new(5, 0);
+    /// let _micros = dur.subsec_nanos() / 1_000;
+    /// let _millis = dur.subsec_nanos() / 1_000_000;
+    /// ```
     pub DURATION_SUBSEC,
     complexity,
     "checks for calculation of subsecond microseconds or milliseconds"
 }
 
-#[derive(Copy, Clone)]
-pub struct DurationSubsec;
-
-impl LintPass for DurationSubsec {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(DURATION_SUBSEC)
-    }
-
-    fn name(&self) -> &'static str {
-        "DurationSubsec"
-    }
-}
+declare_lint_pass!(DurationSubsec => [DURATION_SUBSEC]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DurationSubsec {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {

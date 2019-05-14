@@ -4,45 +4,45 @@ use crate::utils::{
 use rustc::hir::intravisit::*;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_data_structures::thin_vec::ThinVec;
 use rustc_errors::Applicability;
 use syntax::ast::LitKind;
 use syntax::source_map::{dummy_spanned, Span, DUMMY_SP};
 
-/// **What it does:** Checks for boolean expressions that can be written more
-/// concisely.
-///
-/// **Why is this bad?** Readability of boolean expressions suffers from
-/// unnecessary duplication.
-///
-/// **Known problems:** Ignores short circuiting behavior of `||` and
-/// `&&`. Ignores `|`, `&` and `^`.
-///
-/// **Example:**
-/// ```rust
-/// if a && true  // should be: if a
-/// if !(a == b)  // should be: if a != b
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for boolean expressions that can be written more
+    /// concisely.
+    ///
+    /// **Why is this bad?** Readability of boolean expressions suffers from
+    /// unnecessary duplication.
+    ///
+    /// **Known problems:** Ignores short circuiting behavior of `||` and
+    /// `&&`. Ignores `|`, `&` and `^`.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// if a && true  // should be: if a
+    /// if !(a == b)  // should be: if a != b
+    /// ```
     pub NONMINIMAL_BOOL,
     complexity,
     "boolean expressions that can be written more concisely"
 }
 
-/// **What it does:** Checks for boolean expressions that contain terminals that
-/// can be eliminated.
-///
-/// **Why is this bad?** This is most likely a logic bug.
-///
-/// **Known problems:** Ignores short circuiting behavior.
-///
-/// **Example:**
-/// ```rust
-/// if a && b || a { ... }
-/// ```
-/// The `b` is unnecessary, the expression is equivalent to `if a`.
 declare_clippy_lint! {
+    /// **What it does:** Checks for boolean expressions that contain terminals that
+    /// can be eliminated.
+    ///
+    /// **Why is this bad?** This is most likely a logic bug.
+    ///
+    /// **Known problems:** Ignores short circuiting behavior.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// if a && b || a { ... }
+    /// ```
+    /// The `b` is unnecessary, the expression is equivalent to `if a`.
     pub LOGIC_BUG,
     correctness,
     "boolean expressions that contain terminals which can be eliminated"
@@ -51,18 +51,7 @@ declare_clippy_lint! {
 // For each pairs, both orders are considered.
 const METHODS_WITH_NEGATION: [(&str, &str); 2] = [("is_some", "is_none"), ("is_err", "is_ok")];
 
-#[derive(Copy, Clone)]
-pub struct NonminimalBool;
-
-impl LintPass for NonminimalBool {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(NONMINIMAL_BOOL, LOGIC_BUG)
-    }
-
-    fn name(&self) -> &'static str {
-        "NonminimalBool"
-    }
-}
+declare_lint_pass!(NonminimalBool => [NONMINIMAL_BOOL, LOGIC_BUG]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonminimalBool {
     fn check_fn(

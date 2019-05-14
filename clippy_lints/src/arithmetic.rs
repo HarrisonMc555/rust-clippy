@@ -2,39 +2,39 @@ use crate::consts::constant_simple;
 use crate::utils::span_lint;
 use rustc::hir;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_tool_lint, impl_lint_pass};
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for plain integer arithmetic.
-///
-/// **Why is this bad?** This is only checked against overflow in debug builds.
-/// In some applications one wants explicitly checked, wrapping or saturating
-/// arithmetic.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// a + 1
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for plain integer arithmetic.
+    ///
+    /// **Why is this bad?** This is only checked against overflow in debug builds.
+    /// In some applications one wants explicitly checked, wrapping or saturating
+    /// arithmetic.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// a + 1
+    /// ```
     pub INTEGER_ARITHMETIC,
     restriction,
     "any integer arithmetic statement"
 }
 
-/// **What it does:** Checks for float arithmetic.
-///
-/// **Why is this bad?** For some embedded systems or kernel development, it
-/// can be useful to rule out floating-point numbers.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// a + 1.0
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for float arithmetic.
+    ///
+    /// **Why is this bad?** For some embedded systems or kernel development, it
+    /// can be useful to rule out floating-point numbers.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// a + 1.0
+    /// ```
     pub FLOAT_ARITHMETIC,
     restriction,
     "any floating-point arithmetic statement"
@@ -48,15 +48,7 @@ pub struct Arithmetic {
     const_span: Option<Span>,
 }
 
-impl LintPass for Arithmetic {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(INTEGER_ARITHMETIC, FLOAT_ARITHMETIC)
-    }
-
-    fn name(&self) -> &'static str {
-        "Arithmetic"
-    }
-}
+impl_lint_pass!(Arithmetic => [INTEGER_ARITHMETIC, FLOAT_ARITHMETIC]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Arithmetic {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx hir::Expr) {

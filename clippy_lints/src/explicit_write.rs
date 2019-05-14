@@ -1,43 +1,32 @@
-use crate::utils::{is_expn_of, match_def_path, opt_def_id, resolve_node, span_lint, span_lint_and_sugg};
+use crate::utils::{is_expn_of, resolve_node, span_lint, span_lint_and_sugg};
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::LitKind;
 
-/// **What it does:** Checks for usage of `write!()` / `writeln()!` which can be
-/// replaced with `(e)print!()` / `(e)println!()`
-///
-/// **Why is this bad?** Using `(e)println! is clearer and more concise
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// // this would be clearer as `eprintln!("foo: {:?}", bar);`
-/// writeln!(&mut io::stderr(), "foo: {:?}", bar).unwrap();
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usage of `write!()` / `writeln()!` which can be
+    /// replaced with `(e)print!()` / `(e)println!()`
+    ///
+    /// **Why is this bad?** Using `(e)println! is clearer and more concise
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// // this would be clearer as `eprintln!("foo: {:?}", bar);`
+    /// writeln!(&mut io::stderr(), "foo: {:?}", bar).unwrap();
+    /// ```
     pub EXPLICIT_WRITE,
     complexity,
     "using the `write!()` family of functions instead of the `print!()` family of functions, when using the latter would work"
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct Pass;
+declare_lint_pass!(ExplicitWrite => [EXPLICIT_WRITE]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(EXPLICIT_WRITE)
-    }
-
-    fn name(&self) -> &'static str {
-        "ExplicitWrite"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ExplicitWrite {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
             // match call to unwrap
@@ -53,10 +42,10 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             if let ExprKind::Call(ref dest_fun, _) = write_args[0].node;
             if let ExprKind::Path(ref qpath) = dest_fun.node;
             if let Some(dest_fun_id) =
-                opt_def_id(resolve_node(cx, qpath, dest_fun.hir_id));
-            if let Some(dest_name) = if match_def_path(cx.tcx, dest_fun_id, &["std", "io", "stdio", "stdout"]) {
+                resolve_node(cx, qpath, dest_fun.hir_id).opt_def_id();
+            if let Some(dest_name) = if cx.match_def_path(dest_fun_id, &["std", "io", "stdio", "stdout"]) {
                 Some("stdout")
-            } else if match_def_path(cx.tcx, dest_fun_id, &["std", "io", "stdio", "stderr"]) {
+            } else if cx.match_def_path(dest_fun_id, &["std", "io", "stdio", "stderr"]) {
                 Some("stderr")
             } else {
                 None

@@ -2,33 +2,33 @@
 
 use crate::utils::span_lint;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::{ast::*, source_map::DUMMY_SP};
 
 use cargo_metadata;
 
-/// **What it does:** Checks to see if all common metadata is defined in
-/// `Cargo.toml`. See: https://rust-lang-nursery.github.io/api-guidelines/documentation.html#cargotoml-includes-all-common-metadata-c-metadata
-///
-/// **Why is this bad?** It will be more difficult for users to discover the
-/// purpose of the crate, and key information related to it.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```toml
-/// # This `Cargo.toml` is missing an authors field:
-/// [package]
-/// name = "clippy"
-/// version = "0.0.212"
-/// description = "A bunch of helpful lints to avoid common pitfalls in Rust"
-/// repository = "https://github.com/rust-lang/rust-clippy"
-/// readme = "README.md"
-/// license = "MIT/Apache-2.0"
-/// keywords = ["clippy", "lint", "plugin"]
-/// categories = ["development-tools", "development-tools::cargo-plugins"]
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks to see if all common metadata is defined in
+    /// `Cargo.toml`. See: https://rust-lang-nursery.github.io/api-guidelines/documentation.html#cargotoml-includes-all-common-metadata-c-metadata
+    ///
+    /// **Why is this bad?** It will be more difficult for users to discover the
+    /// purpose of the crate, and key information related to it.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```toml
+    /// # This `Cargo.toml` is missing an authors field:
+    /// [package]
+    /// name = "clippy"
+    /// version = "0.0.212"
+    /// description = "A bunch of helpful lints to avoid common pitfalls in Rust"
+    /// repository = "https://github.com/rust-lang/rust-clippy"
+    /// readme = "README.md"
+    /// license = "MIT/Apache-2.0"
+    /// keywords = ["clippy", "lint", "plugin"]
+    /// categories = ["development-tools", "development-tools::cargo-plugins"]
+    /// ```
     pub CARGO_COMMON_METADATA,
     cargo,
     "common metadata is defined in `Cargo.toml`"
@@ -56,19 +56,9 @@ fn is_empty_vec(value: &[String]) -> bool {
     value.iter().all(std::string::String::is_empty)
 }
 
-pub struct Pass;
+declare_lint_pass!(CargoCommonMetadata => [CARGO_COMMON_METADATA]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(CARGO_COMMON_METADATA)
-    }
-
-    fn name(&self) -> &'static str {
-        "CargoCommonMetadata"
-    }
-}
-
-impl EarlyLintPass for Pass {
+impl EarlyLintPass for CargoCommonMetadata {
     fn check_crate(&mut self, cx: &EarlyContext<'_>, _: &Crate) {
         let metadata = if let Ok(metadata) = cargo_metadata::MetadataCommand::new().no_deps().exec() {
             metadata

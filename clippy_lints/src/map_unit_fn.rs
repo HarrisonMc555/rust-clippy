@@ -3,91 +3,80 @@ use crate::utils::{in_macro, iter_input_pats, match_type, method_chain_args, sni
 use if_chain::if_chain;
 use rustc::hir;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::ty::{self, Ty};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::source_map::Span;
 
-#[derive(Clone)]
-pub struct Pass;
-
-/// **What it does:** Checks for usage of `option.map(f)` where f is a function
-/// or closure that returns the unit type.
-///
-/// **Why is this bad?** Readability, this can be written more clearly with
-/// an if let statement
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-///
-/// ```rust
-/// let x: Option<&str> = do_stuff();
-/// x.map(log_err_msg);
-/// x.map(|msg| log_err_msg(format_msg(msg)))
-/// ```
-///
-/// The correct use would be:
-///
-/// ```rust
-/// let x: Option<&str> = do_stuff();
-/// if let Some(msg) = x {
-///     log_err_msg(msg)
-/// }
-/// if let Some(msg) = x {
-///     log_err_msg(format_msg(msg))
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usage of `option.map(f)` where f is a function
+    /// or closure that returns the unit type.
+    ///
+    /// **Why is this bad?** Readability, this can be written more clearly with
+    /// an if let statement
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    ///
+    /// ```rust
+    /// let x: Option<&str> = do_stuff();
+    /// x.map(log_err_msg);
+    /// x.map(|msg| log_err_msg(format_msg(msg)))
+    /// ```
+    ///
+    /// The correct use would be:
+    ///
+    /// ```rust
+    /// let x: Option<&str> = do_stuff();
+    /// if let Some(msg) = x {
+    ///     log_err_msg(msg)
+    /// }
+    /// if let Some(msg) = x {
+    ///     log_err_msg(format_msg(msg))
+    /// }
+    /// ```
     pub OPTION_MAP_UNIT_FN,
     complexity,
     "using `option.map(f)`, where f is a function or closure that returns ()"
 }
 
-/// **What it does:** Checks for usage of `result.map(f)` where f is a function
-/// or closure that returns the unit type.
-///
-/// **Why is this bad?** Readability, this can be written more clearly with
-/// an if let statement
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-///
-/// ```rust
-/// let x: Result<&str, &str> = do_stuff();
-/// x.map(log_err_msg);
-/// x.map(|msg| log_err_msg(format_msg(msg)))
-/// ```
-///
-/// The correct use would be:
-///
-/// ```rust
-/// let x: Result<&str, &str> = do_stuff();
-/// if let Ok(msg) = x {
-///     log_err_msg(msg)
-/// }
-/// if let Ok(msg) = x {
-///     log_err_msg(format_msg(msg))
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for usage of `result.map(f)` where f is a function
+    /// or closure that returns the unit type.
+    ///
+    /// **Why is this bad?** Readability, this can be written more clearly with
+    /// an if let statement
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    ///
+    /// ```rust
+    /// let x: Result<&str, &str> = do_stuff();
+    /// x.map(log_err_msg);
+    /// x.map(|msg| log_err_msg(format_msg(msg)))
+    /// ```
+    ///
+    /// The correct use would be:
+    ///
+    /// ```rust
+    /// let x: Result<&str, &str> = do_stuff();
+    /// if let Ok(msg) = x {
+    ///     log_err_msg(msg)
+    /// }
+    /// if let Ok(msg) = x {
+    ///     log_err_msg(format_msg(msg))
+    /// }
+    /// ```
     pub RESULT_MAP_UNIT_FN,
     complexity,
     "using `result.map(f)`, where f is a function or closure that returns ()"
 }
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(OPTION_MAP_UNIT_FN, RESULT_MAP_UNIT_FN)
-    }
+declare_lint_pass!(MapUnit => [OPTION_MAP_UNIT_FN, RESULT_MAP_UNIT_FN]);
 
-    fn name(&self) -> &'static str {
-        "MapUnit"
-    }
-}
-
-fn is_unit_type(ty: ty::Ty<'_>) -> bool {
+fn is_unit_type(ty: Ty<'_>) -> bool {
     match ty.sty {
         ty::Tuple(slice) => slice.is_empty(),
         ty::Never => true,
@@ -249,7 +238,7 @@ fn lint_map_unit_fn(cx: &LateContext<'_, '_>, stmt: &hir::Stmt, expr: &hir::Expr
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MapUnit {
     fn check_stmt(&mut self, cx: &LateContext<'_, '_>, stmt: &hir::Stmt) {
         if in_macro(stmt.span) {
             return;

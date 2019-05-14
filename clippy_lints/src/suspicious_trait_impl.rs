@@ -1,66 +1,55 @@
-use crate::utils::{get_trait_def_id, span_lint};
+use crate::utils::{get_trait_def_id, span_lint, trait_ref_of_method};
 use if_chain::if_chain;
 use rustc::hir;
 use rustc::hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Lints for suspicious operations in impls of arithmetic operators, e.g.
-/// subtracting elements in an Add impl.
-///
-/// **Why this is bad?** This is probably a typo or copy-and-paste error and not intended.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// impl Add for Foo {
-///     type Output = Foo;
-///
-///     fn add(self, other: Foo) -> Foo {
-///         Foo(self.0 - other.0)
-///     }
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Lints for suspicious operations in impls of arithmetic operators, e.g.
+    /// subtracting elements in an Add impl.
+    ///
+    /// **Why this is bad?** This is probably a typo or copy-and-paste error and not intended.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// impl Add for Foo {
+    ///     type Output = Foo;
+    ///
+    ///     fn add(self, other: Foo) -> Foo {
+    ///         Foo(self.0 - other.0)
+    ///     }
+    /// }
+    /// ```
     pub SUSPICIOUS_ARITHMETIC_IMPL,
     correctness,
     "suspicious use of operators in impl of arithmetic trait"
 }
 
-/// **What it does:** Lints for suspicious operations in impls of OpAssign, e.g.
-/// subtracting elements in an AddAssign impl.
-///
-/// **Why this is bad?** This is probably a typo or copy-and-paste error and not intended.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// impl AddAssign for Foo {
-///     fn add_assign(&mut self, other: Foo) {
-///         *self = *self - other;
-///     }
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Lints for suspicious operations in impls of OpAssign, e.g.
+    /// subtracting elements in an AddAssign impl.
+    ///
+    /// **Why this is bad?** This is probably a typo or copy-and-paste error and not intended.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// impl AddAssign for Foo {
+    ///     fn add_assign(&mut self, other: Foo) {
+    ///         *self = *self - other;
+    ///     }
+    /// }
+    /// ```
     pub SUSPICIOUS_OP_ASSIGN_IMPL,
     correctness,
     "suspicious use of operators in impl of OpAssign trait"
 }
 
-#[derive(Copy, Clone)]
-pub struct SuspiciousImpl;
-
-impl LintPass for SuspiciousImpl {
-    fn get_lints(&self) -> LintArray {
-        lint_array![SUSPICIOUS_ARITHMETIC_IMPL, SUSPICIOUS_OP_ASSIGN_IMPL]
-    }
-
-    fn name(&self) -> &'static str {
-        "SuspiciousImpl"
-    }
-}
+declare_lint_pass!(SuspiciousImpl => [SUSPICIOUS_ARITHMETIC_IMPL, SUSPICIOUS_OP_ASSIGN_IMPL]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for SuspiciousImpl {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx hir::Expr) {
@@ -177,12 +166,9 @@ fn check_binop<'a>(
 
     // Get the actually implemented trait
     let parent_fn = cx.tcx.hir().get_parent_item(expr.hir_id);
-    let parent_impl = cx.tcx.hir().get_parent_item(parent_fn);
 
     if_chain! {
-        if parent_impl != hir::CRATE_HIR_ID;
-        if let hir::Node::Item(item) = cx.tcx.hir().get_by_hir_id(parent_impl);
-        if let hir::ItemKind::Impl(_, _, _, _, Some(ref trait_ref), _, _) = item.node;
+        if let Some(trait_ref) = trait_ref_of_method(cx, parent_fn);
         if let Some(idx) = trait_ids.iter().position(|&tid| tid == trait_ref.path.def.def_id());
         if binop != expected_ops[idx];
         then{

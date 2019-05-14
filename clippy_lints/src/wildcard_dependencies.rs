@@ -1,45 +1,35 @@
 use crate::utils::span_lint;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::{ast::*, source_map::DUMMY_SP};
 
 use cargo_metadata;
 use if_chain::if_chain;
 use semver;
 
-/// **What it does:** Checks for wildcard dependencies in the `Cargo.toml`.
-///
-/// **Why is this bad?** [As the edition guide says](https://rust-lang-nursery.github.io/edition-guide/rust-2018/cargo-and-crates-io/crates-io-disallows-wildcard-dependencies.html),
-/// it is highly unlikely that you work with any possible version of your dependency,
-/// and wildcard dependencies would cause unnecessary breakage in the ecosystem.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-///
-/// ```toml
-/// [dependencies]
-/// regex = "*"
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for wildcard dependencies in the `Cargo.toml`.
+    ///
+    /// **Why is this bad?** [As the edition guide says](https://rust-lang-nursery.github.io/edition-guide/rust-2018/cargo-and-crates-io/crates-io-disallows-wildcard-dependencies.html),
+    /// it is highly unlikely that you work with any possible version of your dependency,
+    /// and wildcard dependencies would cause unnecessary breakage in the ecosystem.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    ///
+    /// ```toml
+    /// [dependencies]
+    /// regex = "*"
+    /// ```
     pub WILDCARD_DEPENDENCIES,
     cargo,
     "wildcard dependencies being used"
 }
 
-pub struct Pass;
+declare_lint_pass!(WildcardDependencies => [WILDCARD_DEPENDENCIES]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(WILDCARD_DEPENDENCIES)
-    }
-
-    fn name(&self) -> &'static str {
-        "WildcardDependencies"
-    }
-}
-
-impl EarlyLintPass for Pass {
+impl EarlyLintPass for WildcardDependencies {
     fn check_crate(&mut self, cx: &EarlyContext<'_>, _: &Crate) {
         let metadata = if let Ok(metadata) = cargo_metadata::MetadataCommand::new().no_deps().exec() {
             metadata

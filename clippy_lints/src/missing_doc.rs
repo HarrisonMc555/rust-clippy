@@ -6,24 +6,25 @@
 //
 
 use crate::utils::{in_macro, span_lint};
+use if_chain::if_chain;
 use rustc::hir;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintContext, LintPass};
 use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
-use syntax::ast;
+use rustc::{declare_tool_lint, impl_lint_pass};
+use syntax::ast::{self, MetaItem, MetaItemKind};
 use syntax::attr;
 use syntax::source_map::Span;
 
-/// **What it does:** Warns if there is missing doc for any documentable item
-/// (public or private).
-///
-/// **Why is this bad?** Doc is good. *rustc* has a `MISSING_DOCS`
-/// allowed-by-default lint for
-/// public members, but has no way to enforce documentation of private items.
-/// This lint fixes that.
-///
-/// **Known problems:** None.
 declare_clippy_lint! {
+    /// **What it does:** Warns if there is missing doc for any documentable item
+    /// (public or private).
+    ///
+    /// **Why is this bad?** Doc is good. *rustc* has a `MISSING_DOCS`
+    /// allowed-by-default lint for
+    /// public members, but has no way to enforce documentation of private items.
+    /// This lint fixes that.
+    ///
+    /// **Known problems:** None.
     pub MISSING_DOCS_IN_PRIVATE_ITEMS,
     restriction,
     "detects missing documentation for public and private members"
@@ -52,6 +53,20 @@ impl MissingDoc {
         *self.doc_hidden_stack.last().expect("empty doc_hidden_stack")
     }
 
+    fn has_include(meta: Option<MetaItem>) -> bool {
+        if_chain! {
+            if let Some(meta) = meta;
+            if let MetaItemKind::List(list) = meta.node;
+            if let Some(meta) = list.get(0);
+            if let Some(name) = meta.ident();
+            then {
+                name.as_str() == "include"
+            } else {
+                false
+            }
+        }
+    }
+
     fn check_missing_docs_attrs(
         &self,
         cx: &LateContext<'_, '_>,
@@ -74,7 +89,9 @@ impl MissingDoc {
             return;
         }
 
-        let has_doc = attrs.iter().any(|a| a.is_value_str() && a.name() == "doc");
+        let has_doc = attrs
+            .iter()
+            .any(|a| a.check_name("doc") && (a.is_value_str() || Self::has_include(a.meta())));
         if !has_doc {
             span_lint(
                 cx,
@@ -86,15 +103,7 @@ impl MissingDoc {
     }
 }
 
-impl LintPass for MissingDoc {
-    fn get_lints(&self) -> LintArray {
-        lint_array![MISSING_DOCS_IN_PRIVATE_ITEMS]
-    }
-
-    fn name(&self) -> &'static str {
-        "MissingDoc"
-    }
-}
+impl_lint_pass!(MissingDoc => [MISSING_DOCS_IN_PRIVATE_ITEMS]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDoc {
     fn enter_lint_attrs(&mut self, _: &LateContext<'a, 'tcx>, attrs: &'tcx [ast::Attribute]) {
@@ -124,7 +133,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDoc {
             hir::ItemKind::Fn(..) => {
                 // ignore main()
                 if it.ident.name == "main" {
-                    let def_id = cx.tcx.hir().local_def_id(it.id);
+                    let def_id = cx.tcx.hir().local_def_id_from_hir_id(it.hir_id);
                     let def_key = cx.tcx.hir().def_key(def_id);
                     if def_key.parent == Some(hir::def_id::CRATE_DEF_INDEX) {
                         return;
@@ -162,7 +171,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDoc {
 
     fn check_impl_item(&mut self, cx: &LateContext<'a, 'tcx>, impl_item: &'tcx hir::ImplItem) {
         // If the method is an impl for a trait, don't doc.
-        let def_id = cx.tcx.hir().local_def_id(impl_item.id);
+        let def_id = cx.tcx.hir().local_def_id_from_hir_id(impl_item.hir_id);
         match cx.tcx.associated_item(def_id).container {
             ty::TraitContainer(_) => return,
             ty::ImplContainer(cid) => {

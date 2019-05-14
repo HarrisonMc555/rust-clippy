@@ -2,50 +2,40 @@
 
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::source_map::Span;
 
 use crate::utils::{snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
 
-/// **What it does:** Checks for double comparions that could be simplified to a single expression.
-///
-///
-/// **Why is this bad?** Readability.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// x == y || x < y
-/// ```
-///
-/// Could be written as:
-///
-/// ```rust
-/// x <= y
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for double comparions that could be simplified to a single expression.
+    ///
+    ///
+    /// **Why is this bad?** Readability.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// x == y || x < y
+    /// ```
+    ///
+    /// Could be written as:
+    ///
+    /// ```rust
+    /// x <= y
+    /// ```
     pub DOUBLE_COMPARISONS,
     complexity,
     "unnecessary double comparisons that can be simplified"
 }
 
-pub struct Pass;
+declare_lint_pass!(DoubleComparisons => [DOUBLE_COMPARISONS]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(DOUBLE_COMPARISONS)
-    }
-
-    fn name(&self) -> &'static str {
-        "DoubleComparisons"
-    }
-}
-
-impl<'a, 'tcx> Pass {
+impl<'a, 'tcx> DoubleComparisons {
     #[allow(clippy::similar_names)]
-    fn check_binop(&self, cx: &LateContext<'a, 'tcx>, op: BinOpKind, lhs: &'tcx Expr, rhs: &'tcx Expr, span: Span) {
+    fn check_binop(self, cx: &LateContext<'a, 'tcx>, op: BinOpKind, lhs: &'tcx Expr, rhs: &'tcx Expr, span: Span) {
         let (lkind, llhs, lrhs, rkind, rlhs, rrhs) = match (lhs.node.clone(), rhs.node.clone()) {
             (ExprKind::Binary(lb, llhs, lrhs), ExprKind::Binary(rb, rlhs, rrhs)) => {
                 (lb.node, llhs, lrhs, rb.node, rlhs, rrhs)
@@ -91,7 +81,7 @@ impl<'a, 'tcx> Pass {
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DoubleComparisons {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if let ExprKind::Binary(ref kind, ref lhs, ref rhs) = expr.node {
             self.check_binop(cx, kind.node, lhs, rhs, expr.span);

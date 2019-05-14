@@ -1,45 +1,34 @@
 use crate::utils::{in_macro, snippet_with_applicability, span_lint_and_sugg};
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 use syntax::ast::*;
 use syntax::source_map::Spanned;
 
-/// **What it does:** Checks for operations where precedence may be unclear
-/// and suggests to add parentheses. Currently it catches the following:
-/// * mixed usage of arithmetic and bit shifting/combining operators without
-/// parentheses
-/// * a "negative" numeric literal (which is really a unary `-` followed by a
-/// numeric literal)
-///   followed by a method call
-///
-/// **Why is this bad?** Not everyone knows the precedence of those operators by
-/// heart, so expressions like these may trip others trying to reason about the
-/// code.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// * `1 << 2 + 3` equals 32, while `(1 << 2) + 3` equals 7
-/// * `-1i32.abs()` equals -1, while `(-1i32).abs()` equals 1
 declare_clippy_lint! {
+    /// **What it does:** Checks for operations where precedence may be unclear
+    /// and suggests to add parentheses. Currently it catches the following:
+    /// * mixed usage of arithmetic and bit shifting/combining operators without
+    /// parentheses
+    /// * a "negative" numeric literal (which is really a unary `-` followed by a
+    /// numeric literal)
+    ///   followed by a method call
+    ///
+    /// **Why is this bad?** Not everyone knows the precedence of those operators by
+    /// heart, so expressions like these may trip others trying to reason about the
+    /// code.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// * `1 << 2 + 3` equals 32, while `(1 << 2) + 3` equals 7
+    /// * `-1i32.abs()` equals -1, while `(-1i32).abs()` equals 1
     pub PRECEDENCE,
     complexity,
     "operations where precedence may be unclear"
 }
 
-#[derive(Copy, Clone)]
-pub struct Precedence;
-
-impl LintPass for Precedence {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(PRECEDENCE)
-    }
-
-    fn name(&self) -> &'static str {
-        "Precedence"
-    }
-}
+declare_lint_pass!(Precedence => [PRECEDENCE]);
 
 impl EarlyLintPass for Precedence {
     fn check_expr(&mut self, cx: &EarlyContext<'_>, expr: &Expr) {

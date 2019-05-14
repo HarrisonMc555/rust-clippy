@@ -1,41 +1,33 @@
-use crate::utils::{match_def_path, opt_def_id, paths, snippet, span_lint_and_then, walk_ptrs_ty_depth};
+use crate::utils::{paths, snippet, span_lint_and_then, walk_ptrs_ty_depth};
 use if_chain::if_chain;
 use rustc::hir::{Expr, ExprKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 
 use std::iter;
 
-/// **What it does:** Checks for calls of `mem::discriminant()` on a non-enum type.
-///
-/// **Why is this bad?** The value of `mem::discriminant()` on non-enum types
-/// is unspecified.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// mem::discriminant(&"hello");
-/// mem::discriminant(&&Some(2));
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for calls of `mem::discriminant()` on a non-enum type.
+    ///
+    /// **Why is this bad?** The value of `mem::discriminant()` on non-enum types
+    /// is unspecified.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// use std::mem;
+    ///
+    /// mem::discriminant(&"hello");
+    /// mem::discriminant(&&Some(2));
+    /// ```
     pub MEM_DISCRIMINANT_NON_ENUM,
     correctness,
     "calling mem::descriminant on non-enum type"
 }
 
-pub struct MemDiscriminant;
-
-impl LintPass for MemDiscriminant {
-    fn get_lints(&self) -> LintArray {
-        lint_array![MEM_DISCRIMINANT_NON_ENUM]
-    }
-
-    fn name(&self) -> &'static str {
-        "MemDiscriminant"
-    }
-}
+declare_lint_pass!(MemDiscriminant => [MEM_DISCRIMINANT_NON_ENUM]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MemDiscriminant {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
@@ -43,8 +35,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MemDiscriminant {
             if let ExprKind::Call(ref func, ref func_args) = expr.node;
             // is `mem::discriminant`
             if let ExprKind::Path(ref func_qpath) = func.node;
-            if let Some(def_id) = opt_def_id(cx.tables.qpath_def(func_qpath, func.hir_id));
-            if match_def_path(cx.tcx, def_id, &paths::MEM_DISCRIMINANT);
+            if let Some(def_id) = cx.tables.qpath_def(func_qpath, func.hir_id).opt_def_id();
+            if cx.match_def_path(def_id, &paths::MEM_DISCRIMINANT);
             // type is non-enum
             let ty_param = cx.tables.node_substs(func.hir_id).type_at(0);
             if !ty_param.is_enum();

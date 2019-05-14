@@ -2,59 +2,52 @@ use crate::utils::span_lint;
 use itertools::Itertools;
 use pulldown_cmark;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_tool_lint, impl_lint_pass};
 use rustc_data_structures::fx::FxHashSet;
 use syntax::ast;
 use syntax::source_map::{BytePos, Span};
 use syntax_pos::Pos;
 use url::Url;
 
-/// **What it does:** Checks for the presence of `_`, `::` or camel-case words
-/// outside ticks in documentation.
-///
-/// **Why is this bad?** *Rustdoc* supports markdown formatting, `_`, `::` and
-/// camel-case probably indicates some code which should be included between
-/// ticks. `_` can also be used for emphasis in markdown, this lint tries to
-/// consider that.
-///
-/// **Known problems:** Lots of bad docs won’t be fixed, what the lint checks
-/// for is limited, and there are still false positives.
-///
-/// **Examples:**
-/// ```rust
-/// /// Do something with the foo_bar parameter. See also
-/// /// that::other::module::foo.
-/// // ^ `foo_bar` and `that::other::module::foo` should be ticked.
-/// fn doit(foo_bar) { .. }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for the presence of `_`, `::` or camel-case words
+    /// outside ticks in documentation.
+    ///
+    /// **Why is this bad?** *Rustdoc* supports markdown formatting, `_`, `::` and
+    /// camel-case probably indicates some code which should be included between
+    /// ticks. `_` can also be used for emphasis in markdown, this lint tries to
+    /// consider that.
+    ///
+    /// **Known problems:** Lots of bad docs won’t be fixed, what the lint checks
+    /// for is limited, and there are still false positives.
+    ///
+    /// **Examples:**
+    /// ```rust
+    /// /// Do something with the foo_bar parameter. See also
+    /// /// that::other::module::foo.
+    /// // ^ `foo_bar` and `that::other::module::foo` should be ticked.
+    /// fn doit(foo_bar) { .. }
+    /// ```
     pub DOC_MARKDOWN,
     pedantic,
     "presence of `_`, `::` or camel-case outside backticks in documentation"
 }
 
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone)]
-pub struct Doc {
+pub struct DocMarkdown {
     valid_idents: FxHashSet<String>,
 }
 
-impl Doc {
+impl DocMarkdown {
     pub fn new(valid_idents: FxHashSet<String>) -> Self {
         Self { valid_idents }
     }
 }
 
-impl LintPass for Doc {
-    fn get_lints(&self) -> LintArray {
-        lint_array![DOC_MARKDOWN]
-    }
+impl_lint_pass!(DocMarkdown => [DOC_MARKDOWN]);
 
-    fn name(&self) -> &'static str {
-        "DocMarkdown"
-    }
-}
-
-impl EarlyLintPass for Doc {
+impl EarlyLintPass for DocMarkdown {
     fn check_crate(&mut self, cx: &EarlyContext<'_>, krate: &ast::Crate) {
         check_attrs(cx, &self.valid_idents, &krate.attrs);
     }
@@ -152,7 +145,7 @@ pub fn check_attrs<'a>(cx: &EarlyContext<'_>, valid_idents: &FxHashSet<String>, 
                 spans.extend_from_slice(&current_spans);
                 doc.push_str(&current);
             }
-        } else if attr.name() == "doc" {
+        } else if attr.check_name("doc") {
             // ignore mix of sugared and non-sugared doc
             return;
         }
@@ -257,10 +250,9 @@ fn check_text(cx: &EarlyContext<'_>, valid_idents: &FxHashSet<String>, text: &st
 }
 
 fn check_word(cx: &EarlyContext<'_>, word: &str, span: Span) {
-    /// Checks if a string is camel-case, ie. contains at least two uppercase
-    /// letter (`Clippy` is
-    /// ok) and one lower-case letter (`NASA` is ok). Plural are also excluded
-    /// (`IDs` is ok).
+    /// Checks if a string is camel-case, i.e., contains at least two uppercase
+    /// letters (`Clippy` is ok) and one lower-case letter (`NASA` is ok).
+    /// Plurals are also excluded (`IDs` is ok).
     fn is_camel_case(s: &str) -> bool {
         if s.starts_with(|c: char| c.is_digit(10)) {
             return false;

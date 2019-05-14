@@ -1,40 +1,30 @@
-use crate::consts::{constant_simple, Constant};
-use crate::utils::{clip, in_macro, snippet, span_lint, unsext};
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::ty;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for identity operations, e.g. `x + 0`.
-///
-/// **Why is this bad?** This code can be removed without changing the
-/// meaning. So it just obscures what's going on. Delete it mercilessly.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// x / 1 + 0 * 1 - 0 | 0
-/// ```
+use crate::consts::{constant_simple, Constant};
+use crate::utils::{clip, in_macro, snippet, span_lint, unsext};
+
 declare_clippy_lint! {
+    /// **What it does:** Checks for identity operations, e.g., `x + 0`.
+    ///
+    /// **Why is this bad?** This code can be removed without changing the
+    /// meaning. So it just obscures what's going on. Delete it mercilessly.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// x / 1 + 0 * 1 - 0 | 0
+    /// ```
     pub IDENTITY_OP,
     complexity,
-    "using identity operations, e.g. `x + 0` or `y / 1`"
+    "using identity operations, e.g., `x + 0` or `y / 1`"
 }
 
-#[derive(Copy, Clone)]
-pub struct IdentityOp;
-
-impl LintPass for IdentityOp {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(IDENTITY_OP)
-    }
-
-    fn name(&self) -> &'static str {
-        "IdentityOp"
-    }
-}
+declare_lint_pass!(IdentityOp => [IDENTITY_OP]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for IdentityOp {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {

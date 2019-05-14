@@ -1,60 +1,58 @@
 use if_chain::if_chain;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
 use crate::utils::{in_macro, match_type, paths, span_lint_and_then, usage::is_potentially_mutated};
 use rustc::hir::intravisit::*;
 use rustc::hir::*;
 use syntax::source_map::Span;
 
-/// **What it does:** Checks for calls of `unwrap[_err]()` that cannot fail.
-///
-/// **Why is this bad?** Using `if let` or `match` is more idiomatic.
-///
-/// **Known problems:** Limitations of the borrow checker might make unwrap() necessary sometimes?
-///
-/// **Example:**
-/// ```rust
-/// if option.is_some() {
-///     do_something_with(option.unwrap())
-/// }
-/// ```
-///
-/// Could be written:
-///
-/// ```rust
-/// if let Some(value) = option {
-///     do_something_with(value)
-/// }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for calls of `unwrap[_err]()` that cannot fail.
+    ///
+    /// **Why is this bad?** Using `if let` or `match` is more idiomatic.
+    ///
+    /// **Known problems:** Limitations of the borrow checker might make unwrap() necessary sometimes?
+    ///
+    /// **Example:**
+    /// ```rust
+    /// if option.is_some() {
+    ///     do_something_with(option.unwrap())
+    /// }
+    /// ```
+    ///
+    /// Could be written:
+    ///
+    /// ```rust
+    /// if let Some(value) = option {
+    ///     do_something_with(value)
+    /// }
+    /// ```
     pub UNNECESSARY_UNWRAP,
     nursery,
     "checks for calls of unwrap[_err]() that cannot fail"
 }
 
-/// **What it does:** Checks for calls of `unwrap[_err]()` that will always fail.
-///
-/// **Why is this bad?** If panicking is desired, an explicit `panic!()` should be used.
-///
-/// **Known problems:** This lint only checks `if` conditions not assignments.
-/// So something like `let x: Option<()> = None; x.unwrap();` will not be recognized.
-///
-/// **Example:**
-/// ```rust
-/// if option.is_none() {
-///     do_something_with(option.unwrap())
-/// }
-/// ```
-///
-/// This code will always panic. The if condition should probably be inverted.
 declare_clippy_lint! {
+    /// **What it does:** Checks for calls of `unwrap[_err]()` that will always fail.
+    ///
+    /// **Why is this bad?** If panicking is desired, an explicit `panic!()` should be used.
+    ///
+    /// **Known problems:** This lint only checks `if` conditions not assignments.
+    /// So something like `let x: Option<()> = None; x.unwrap();` will not be recognized.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// if option.is_none() {
+    ///     do_something_with(option.unwrap())
+    /// }
+    /// ```
+    ///
+    /// This code will always panic. The if condition should probably be inverted.
     pub PANICKING_UNWRAP,
     nursery,
     "checks for calls of unwrap[_err]() that will always fail"
 }
-
-pub struct Pass;
 
 /// Visitor that keeps track of which variables are unwrappable.
 struct UnwrappableVariablesVisitor<'a, 'tcx: 'a> {
@@ -179,17 +177,9 @@ impl<'a, 'tcx: 'a> Visitor<'tcx> for UnwrappableVariablesVisitor<'a, 'tcx> {
     }
 }
 
-impl<'a> LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(PANICKING_UNWRAP, UNNECESSARY_UNWRAP)
-    }
+declare_lint_pass!(Unwrap => [PANICKING_UNWRAP, UNNECESSARY_UNWRAP]);
 
-    fn name(&self) -> &'static str {
-        "Unwrap"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Unwrap {
     fn check_fn(
         &mut self,
         cx: &LateContext<'a, 'tcx>,

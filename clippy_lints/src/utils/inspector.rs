@@ -5,44 +5,34 @@ use rustc::hir;
 use rustc::hir::print;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintContext, LintPass};
 use rustc::session::Session;
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use syntax::ast::Attribute;
 
-/// **What it does:** Dumps every ast/hir node which has the `#[clippy::dump]`
-/// attribute
-///
-/// **Example:**
-/// ```rust
-/// #[clippy::dump]
-/// extern crate foo;
-/// ```
-///
-/// prints
-///
-/// ```
-/// item `foo`
-/// visibility inherited from outer item
-/// extern crate dylib source: "/path/to/foo.so"
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Dumps every ast/hir node which has the `#[clippy::dump]`
+    /// attribute
+    ///
+    /// **Example:**
+    /// ```rust
+    /// #[clippy::dump]
+    /// extern crate foo;
+    /// ```
+    ///
+    /// prints
+    ///
+    /// ```
+    /// item `foo`
+    /// visibility inherited from outer item
+    /// extern crate dylib source: "/path/to/foo.so"
+    /// ```
     pub DEEP_CODE_INSPECTION,
     internal_warn,
     "helper to dump info about code"
 }
 
-pub struct Pass;
+declare_lint_pass!(DeepCodeInspector => [DEEP_CODE_INSPECTION]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(DEEP_CODE_INSPECTION)
-    }
-
-    fn name(&self) -> &'static str {
-        "DeepCodeInspector"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DeepCodeInspector {
     fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::Item) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
@@ -344,7 +334,7 @@ fn print_expr(cx: &LateContext<'_, '_>, expr: &hir::Expr, indent: usize) {
 }
 
 fn print_item(cx: &LateContext<'_, '_>, item: &hir::Item) {
-    let did = cx.tcx.hir().local_def_id(item.id);
+    let did = cx.tcx.hir().local_def_id_from_hir_id(item.hir_id);
     println!("item `{}`", item.ident.name);
     match item.vis.node {
         hir::VisibilityKind::Public => println!("public"),
@@ -357,7 +347,7 @@ fn print_item(cx: &LateContext<'_, '_>, item: &hir::Item) {
     }
     match item.node {
         hir::ItemKind::ExternCrate(ref _renamed_from) => {
-            let def_id = cx.tcx.hir().local_def_id(item.id);
+            let def_id = cx.tcx.hir().local_def_id_from_hir_id(item.hir_id);
             if let Some(crate_id) = cx.tcx.extern_mod_stmt_cnum(def_id) {
                 let source = cx.tcx.used_crate_source(crate_id);
                 if let Some(ref src) = source.dylib {

@@ -2,47 +2,37 @@ use crate::utils::{in_macro, span_lint};
 use rustc::hir;
 use rustc::hir::intravisit::{walk_expr, walk_fn, FnKind, NestedVisitorMap, Visitor};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_data_structures::fx::FxHashMap;
 use syntax::source_map::Span;
 use syntax::symbol::LocalInternedString;
 
-/// **What it does:** Checks for unused labels.
-///
-/// **Why is this bad?** Maybe the label should be used in which case there is
-/// an error in the code or it should be removed.
-///
-/// **Known problems:** Hopefully none.
-///
-/// **Example:**
-/// ```rust,ignore
-/// fn unused_label() {
-///     'label: for i in 1..2 {
-///         if i > 4 { continue }
-///     }
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for unused labels.
+    ///
+    /// **Why is this bad?** Maybe the label should be used in which case there is
+    /// an error in the code or it should be removed.
+    ///
+    /// **Known problems:** Hopefully none.
+    ///
+    /// **Example:**
+    /// ```rust,ignore
+    /// fn unused_label() {
+    ///     'label: for i in 1..2 {
+    ///         if i > 4 { continue }
+    ///     }
+    /// ```
     pub UNUSED_LABEL,
     complexity,
     "unused labels"
 }
-
-pub struct UnusedLabel;
 
 struct UnusedLabelVisitor<'a, 'tcx: 'a> {
     labels: FxHashMap<LocalInternedString, Span>,
     cx: &'a LateContext<'a, 'tcx>,
 }
 
-impl LintPass for UnusedLabel {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(UNUSED_LABEL)
-    }
-
-    fn name(&self) -> &'static str {
-        "UnusedLable"
-    }
-}
+declare_lint_pass!(UnusedLabel => [UNUSED_LABEL]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedLabel {
     fn check_fn(

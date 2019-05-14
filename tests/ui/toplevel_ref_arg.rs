@@ -20,6 +20,10 @@ fn main() {
 
     let ref mut z = 1 + 2;
 
-    let (ref x, _) = (1, 2); // okay, not top level
+    let (ref x, _) = (1, 2); // ok, not top level
     println!("The answer is {}.", x);
+
+    // Make sure that allowing the lint works
+    #[allow(clippy::toplevel_ref_arg)]
+    let ref mut x = 1_234_543;
 }

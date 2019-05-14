@@ -3,60 +3,50 @@ use crate::utils::{
 };
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
 
-/// **What it does:** Checks for equal operands to comparison, logical and
-/// bitwise, difference and division binary operators (`==`, `>`, etc., `&&`,
-/// `||`, `&`, `|`, `^`, `-` and `/`).
-///
-/// **Why is this bad?** This is usually just a typo or a copy and paste error.
-///
-/// **Known problems:** False negatives: We had some false positives regarding
-/// calls (notably [racer](https://github.com/phildawes/racer) had one instance
-/// of `x.pop() && x.pop()`), so we removed matching any function or method
-/// calls. We may introduce a whitelist of known pure functions in the future.
-///
-/// **Example:**
-/// ```rust
-/// x + 1 == x + 1
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for equal operands to comparison, logical and
+    /// bitwise, difference and division binary operators (`==`, `>`, etc., `&&`,
+    /// `||`, `&`, `|`, `^`, `-` and `/`).
+    ///
+    /// **Why is this bad?** This is usually just a typo or a copy and paste error.
+    ///
+    /// **Known problems:** False negatives: We had some false positives regarding
+    /// calls (notably [racer](https://github.com/phildawes/racer) had one instance
+    /// of `x.pop() && x.pop()`), so we removed matching any function or method
+    /// calls. We may introduce a whitelist of known pure functions in the future.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// # let x = 1;
+    /// if x + 1 == x + 1 {}
+    /// ```
     pub EQ_OP,
     correctness,
-    "equal operands on both sides of a comparison or bitwise combination (e.g. `x == x`)"
+    "equal operands on both sides of a comparison or bitwise combination (e.g., `x == x`)"
 }
 
-/// **What it does:** Checks for arguments to `==` which have their address
-/// taken to satisfy a bound
-/// and suggests to dereference the other argument instead
-///
-/// **Why is this bad?** It is more idiomatic to dereference the other argument.
-///
-/// **Known problems:** None
-///
-/// **Example:**
-/// ```rust
-/// &x == y
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for arguments to `==` which have their address
+    /// taken to satisfy a bound
+    /// and suggests to dereference the other argument instead
+    ///
+    /// **Why is this bad?** It is more idiomatic to dereference the other argument.
+    ///
+    /// **Known problems:** None
+    ///
+    /// **Example:**
+    /// ```ignore
+    /// &x == y
+    /// ```
     pub OP_REF,
     style,
     "taking a reference to satisfy the type constraints on `==`"
 }
 
-#[derive(Copy, Clone)]
-pub struct EqOp;
-
-impl LintPass for EqOp {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(EQ_OP, OP_REF)
-    }
-
-    fn name(&self) -> &'static str {
-        "EqOp"
-    }
-}
+declare_lint_pass!(EqOp => [EQ_OP, OP_REF]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for EqOp {
     #[allow(clippy::similar_names, clippy::too_many_lines)]

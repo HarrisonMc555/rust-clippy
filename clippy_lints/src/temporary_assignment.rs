@@ -3,21 +3,21 @@ use crate::utils::span_lint;
 use rustc::hir::def::Def;
 use rustc::hir::{Expr, ExprKind};
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Checks for construction of a structure or tuple just to
-/// assign a value in it.
-///
-/// **Why is this bad?** Readability. If the structure is only created to be
-/// updated, why not write the structure you want in the first place?
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// (0, 0).0 = 1
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for construction of a structure or tuple just to
+    /// assign a value in it.
+    ///
+    /// **Why is this bad?** Readability. If the structure is only created to be
+    /// updated, why not write the structure you want in the first place?
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// (0, 0).0 = 1
+    /// ```
     pub TEMPORARY_ASSIGNMENT,
     complexity,
     "assignments to temporaries"
@@ -37,20 +37,9 @@ fn is_temporary(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct Pass;
+declare_lint_pass!(TemporaryAssignment => [TEMPORARY_ASSIGNMENT]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(TEMPORARY_ASSIGNMENT)
-    }
-
-    fn name(&self) -> &'static str {
-        "TemporaryAssignment"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TemporaryAssignment {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if let ExprKind::Assign(target, _) = &expr.node {
             let mut base = target;

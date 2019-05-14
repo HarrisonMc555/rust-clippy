@@ -3,38 +3,28 @@ use crate::utils::span_help_and_lint;
 use if_chain::if_chain;
 use rustc::hir::*;
 use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, lint_array};
+use rustc::{declare_lint_pass, declare_tool_lint};
 
-/// **What it does:** Checks for `0.0 / 0.0`.
-///
-/// **Why is this bad?** It's less readable than `std::f32::NAN` or
-/// `std::f64::NAN`.
-///
-/// **Known problems:** None.
-///
-/// **Example:**
-/// ```rust
-/// 0.0f32 / 0.0
-/// ```
 declare_clippy_lint! {
+    /// **What it does:** Checks for `0.0 / 0.0`.
+    ///
+    /// **Why is this bad?** It's less readable than `std::f32::NAN` or
+    /// `std::f64::NAN`.
+    ///
+    /// **Known problems:** None.
+    ///
+    /// **Example:**
+    /// ```rust
+    /// 0.0f32 / 0.0
+    /// ```
     pub ZERO_DIVIDED_BY_ZERO,
     complexity,
     "usage of `0.0 / 0.0` to obtain NaN instead of std::f32::NaN or std::f64::NaN"
 }
 
-pub struct Pass;
+declare_lint_pass!(ZeroDiv => [ZERO_DIVIDED_BY_ZERO]);
 
-impl LintPass for Pass {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(ZERO_DIVIDED_BY_ZERO)
-    }
-
-    fn name(&self) -> &'static str {
-        "ZeroDiv"
-    }
-}
-
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ZeroDiv {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         // check for instances of 0.0/0.0
         if_chain! {
