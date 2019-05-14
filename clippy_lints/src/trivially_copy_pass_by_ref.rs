@@ -1,6 +1,7 @@
 use std::cmp;
 
-use crate::utils::{in_macro, is_copy, is_self_ty, snippet, span_lint_and_sugg};
+use crate::utils::sym;
+use crate::utils::{in_macro_or_desugar, is_copy, is_self_ty, snippet, span_lint_and_sugg};
 use if_chain::if_chain;
 use matches::matches;
 use rustc::hir;
@@ -141,7 +142,7 @@ impl_lint_pass!(TriviallyCopyPassByRef => [TRIVIALLY_COPY_PASS_BY_REF]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TriviallyCopyPassByRef {
     fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx Item) {
-        if in_macro(item.span) {
+        if in_macro_or_desugar(item.span) {
             return;
         }
         if let ItemKind::Trait(_, _, _, _, ref trait_items) = item.node {
@@ -158,7 +159,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TriviallyCopyPassByRef {
         span: Span,
         hir_id: HirId,
     ) {
-        if in_macro(span) {
+        if in_macro_or_desugar(span) {
             return;
         }
 
@@ -168,7 +169,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TriviallyCopyPassByRef {
                     return;
                 }
                 for a in attrs {
-                    if a.meta_item_list().is_some() && a.check_name("proc_macro_derive") {
+                    if a.meta_item_list().is_some() && a.check_name(*sym::proc_macro_derive) {
                         return;
                     }
                 }

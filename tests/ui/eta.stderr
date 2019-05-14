@@ -68,5 +68,23 @@ error: redundant closure found
 LL |     let e: std::vec::Vec<char> = vec!['a', 'b', 'c'].iter().map(|c| c.to_ascii_uppercase()).collect();
    |                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^ help: remove closure as shown: `char::to_ascii_uppercase`
 
-error: aborting due to 11 previous errors
+error: redundant closure found
+  --> $DIR/eta.rs:104:50
+   |
+LL |     let _: Vec<_> = arr.iter().map(|x| x.map_err(|e| some.take().unwrap()(e))).collect();
+   |                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: remove closure as shown: `some.take().unwrap()`
+
+error: redundant closure found
+  --> $DIR/eta.rs:169:27
+   |
+LL |     let a = Some(1u8).map(|a| foo_ptr(a));
+   |                           ^^^^^^^^^^^^^^ help: remove closure as shown: `foo_ptr`
+
+error: redundant closure found
+  --> $DIR/eta.rs:174:27
+   |
+LL |     let a = Some(1u8).map(|a| closure(a));
+   |                           ^^^^^^^^^^^^^^ help: remove closure as shown: `closure`
+
+error: aborting due to 14 previous errors
 

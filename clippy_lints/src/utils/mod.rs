@@ -12,6 +12,7 @@ pub mod internal_lints;
 pub mod paths;
 pub mod ptr;
 pub mod sugg;
+pub mod sym;
 pub mod usage;
 pub use self::attrs::*;
 pub use self::diagnostics::*;
@@ -23,7 +24,7 @@ use std::mem;
 use if_chain::if_chain;
 use matches::matches;
 use rustc::hir;
-use rustc::hir::def::Def;
+use rustc::hir::def::{DefKind, Res};
 use rustc::hir::def_id::{DefId, CRATE_DEF_INDEX, LOCAL_CRATE};
 use rustc::hir::intravisit::{NestedVisitorMap, Visitor};
 use rustc::hir::Node;
@@ -40,6 +41,7 @@ use rustc_data_structures::sync::Lrc;
 use rustc_errors::Applicability;
 use syntax::ast::{self, LitKind};
 use syntax::attr;
+use syntax::ext::hygiene::ExpnFormat;
 use syntax::source_map::{Span, DUMMY_SP};
 use syntax::symbol::{keywords, Symbol};
 
@@ -88,11 +90,23 @@ pub fn in_constant(cx: &LateContext<'_, '_>, id: HirId) -> bool {
     }
 }
 
-/// Returns `true` if this `expn_info` was expanded by any macro.
-pub fn in_macro(span: Span) -> bool {
+/// Returns `true` if this `expn_info` was expanded by any macro or desugaring
+pub fn in_macro_or_desugar(span: Span) -> bool {
     span.ctxt().outer().expn_info().is_some()
 }
 
+/// Returns `true` if this `expn_info` was expanded by any macro.
+pub fn in_macro(span: Span) -> bool {
+    if let Some(info) = span.ctxt().outer().expn_info() {
+        if let ExpnFormat::CompilerDesugaring(..) = info.format {
+            false
+        } else {
+            true
+        }
+    } else {
+        false
+    }
+}
 // If the snippet is empty, it's an attribute that was inserted during macro
 // expansion and we want to ignore those, because they could come from external
 // sources that the user has no control over.
@@ -108,19 +122,19 @@ pub fn is_present_in_source<'a, T: LintContext<'a>>(cx: &T, span: Span) -> bool 
 }
 
 /// Checks if type is struct, enum or union type with the given def path.
-pub fn match_type(cx: &LateContext<'_, '_>, ty: Ty<'_>, path: &[&str]) -> bool {
+pub fn match_type(cx: &LateContext<'_, '_>, ty: Ty<'_>, path: &[Symbol]) -> bool {
     match ty.sty {
-        ty::Adt(adt, _) => cx.match_def_path(adt.did, path),
+        ty::Adt(adt, _) => match_def_path(cx, adt.did, path),
         _ => false,
     }
 }
 
 /// Checks if the method call given in `expr` belongs to the given trait.
-pub fn match_trait_method(cx: &LateContext<'_, '_>, expr: &Expr, path: &[&str]) -> bool {
+pub fn match_trait_method(cx: &LateContext<'_, '_>, expr: &Expr, path: &[Symbol]) -> bool {
     let def_id = cx.tables.type_dependent_def_id(expr.hir_id).unwrap();
     let trt_id = cx.tcx.trait_of_item(def_id);
     if let Some(trt_id) = trt_id {
-        cx.match_def_path(trt_id, path)
+        match_def_path(cx, trt_id, path)
     } else {
         false
     }
@@ -160,7 +174,7 @@ pub fn single_segment_path(path: &QPath) -> Option<&PathSegment> {
 /// ```rust,ignore
 /// match_qpath(path, &["std", "rt", "begin_unwind"])
 /// ```
-pub fn match_qpath(path: &QPath, segments: &[&str]) -> bool {
+pub fn match_qpath(path: &QPath, segments: &[Symbol]) -> bool {
     match *path {
         QPath::Resolved(_, ref path) => match_path(path, segments),
         QPath::TypeRelative(ref ty, ref segment) => match ty.node {
@@ -182,7 +196,7 @@ pub fn match_qpath(path: &QPath, segments: &[&str]) -> bool {
 /// # Examples
 ///
 /// ```rust,ignore
-/// if match_path(&trait_ref.path, &paths::HASH) {
+/// if match_path(&trait_ref.path, &*paths::HASH) {
 ///     // This is the `std::hash::Hash` trait.
 /// }
 ///
@@ -190,7 +204,7 @@ pub fn match_qpath(path: &QPath, segments: &[&str]) -> bool {
 ///     // This is a `rustc::lint::Lint`.
 /// }
 /// ```
-pub fn match_path(path: &Path, segments: &[&str]) -> bool {
+pub fn match_path(path: &Path, segments: &[Symbol]) -> bool {
     path.segments
         .iter()
         .rev()
@@ -204,7 +218,7 @@ pub fn match_path(path: &Path, segments: &[&str]) -> bool {
 /// ```rust,ignore
 /// match_qpath(path, &["std", "rt", "begin_unwind"])
 /// ```
-pub fn match_path_ast(path: &ast::Path, segments: &[&str]) -> bool {
+pub fn match_path_ast(path: &ast::Path, segments: &[Symbol]) -> bool {
     path.segments
         .iter()
         .rev()
@@ -213,7 +227,7 @@ pub fn match_path_ast(path: &ast::Path, segments: &[&str]) -> bool {
 }
 
 /// Gets the definition associated to a path.
-pub fn path_to_def(cx: &LateContext<'_, '_>, path: &[&str]) -> Option<def::Def> {
+pub fn path_to_res(cx: &LateContext<'_, '_>, path: &[Symbol]) -> Option<(def::Res)> {
     let crates = cx.tcx.crates();
     let krate = crates.iter().find(|&&krate| cx.tcx.crate_name(krate) == path[0]);
     if let Some(krate) = krate {
@@ -233,10 +247,10 @@ pub fn path_to_def(cx: &LateContext<'_, '_>, path: &[&str]) -> Option<def::Def> 
             for item in mem::replace(&mut items, Lrc::new(vec![])).iter() {
                 if item.ident.name == *segment {
                     if path_it.peek().is_none() {
-                        return Some(item.def);
+                        return Some(item.res);
                     }
 
-                    items = cx.tcx.item_children(item.def.def_id());
+                    items = cx.tcx.item_children(item.res.def_id());
                     break;
                 }
             }
@@ -247,14 +261,14 @@ pub fn path_to_def(cx: &LateContext<'_, '_>, path: &[&str]) -> Option<def::Def> 
 }
 
 /// Convenience function to get the `DefId` of a trait by path.
-pub fn get_trait_def_id(cx: &LateContext<'_, '_>, path: &[&str]) -> Option<DefId> {
-    let def = match path_to_def(cx, path) {
-        Some(def) => def,
+pub fn get_trait_def_id(cx: &LateContext<'_, '_>, path: &[Symbol]) -> Option<DefId> {
+    let res = match path_to_res(cx, path) {
+        Some(res) => res,
         None => return None,
     };
 
-    match def {
-        def::Def::Trait(trait_id) => Some(trait_id),
+    match res {
+        def::Res::Def(DefKind::Trait, trait_id) => Some(trait_id),
         _ => None,
     }
 }
@@ -317,8 +331,8 @@ pub fn has_drop<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
 }
 
 /// Resolves the definition of a node from its `HirId`.
-pub fn resolve_node(cx: &LateContext<'_, '_>, qpath: &QPath, id: HirId) -> def::Def {
-    cx.tables.qpath_def(qpath, id)
+pub fn resolve_node(cx: &LateContext<'_, '_>, qpath: &QPath, id: HirId) -> Res {
+    cx.tables.qpath_res(qpath, id)
 }
 
 /// Returns the method names and argument list of nested method call expressions that make up
@@ -330,7 +344,7 @@ pub fn method_calls<'a>(expr: &'a Expr, max_depth: usize) -> (Vec<Symbol>, Vec<&
     let mut current = expr;
     for _ in 0..max_depth {
         if let ExprKind::MethodCall(path, _, args) = &current.node {
-            if args.iter().any(|e| in_macro(e.span)) {
+            if args.iter().any(|e| in_macro_or_desugar(e.span)) {
                 break;
             }
             method_names.push(path.ident.name);
@@ -350,14 +364,14 @@ pub fn method_calls<'a>(expr: &'a Expr, max_depth: usize) -> (Vec<Symbol>, Vec<&
 /// `matched_method_chain(expr, &["bar", "baz"])` will return a `Vec`
 /// containing the `Expr`s for
 /// `.bar()` and `.baz()`
-pub fn method_chain_args<'a>(expr: &'a Expr, methods: &[&str]) -> Option<Vec<&'a [Expr]>> {
+pub fn method_chain_args<'a>(expr: &'a Expr, methods: &[Symbol]) -> Option<Vec<&'a [Expr]>> {
     let mut current = expr;
     let mut matched = Vec::with_capacity(methods.len());
     for method_name in methods.iter().rev() {
         // method chains are stored last -> first
         if let ExprKind::MethodCall(ref path, _, ref args) = current.node {
             if path.ident.name == *method_name {
-                if args.iter().any(|e| in_macro(e.span)) {
+                if args.iter().any(|e| in_macro_or_desugar(e.span)) {
                     return None;
                 }
                 matched.push(&**args); // build up `matched` backwards
@@ -452,7 +466,7 @@ pub fn snippet_with_applicability<'a, 'b, T: LintContext<'b>>(
     default: &'a str,
     applicability: &mut Applicability,
 ) -> Cow<'a, str> {
-    if *applicability != Applicability::Unspecified && in_macro(span) {
+    if *applicability != Applicability::Unspecified && in_macro_or_desugar(span) {
         *applicability = Applicability::MaybeIncorrect;
     }
     snippet_opt(cx, span).map_or_else(
@@ -522,7 +536,7 @@ pub fn expr_block<'a, 'b, T: LintContext<'b>>(
 ) -> Cow<'a, str> {
     let code = snippet_block(cx, expr.span, default);
     let string = option.unwrap_or_default();
-    if in_macro(expr.span) {
+    if in_macro_or_desugar(expr.span) {
         Cow::Owned(format!("{{ {} }}", snippet_with_macro_callsite(cx, expr.span, default)))
     } else if let ExprKind::Block(_, _) = expr.node {
         Cow::Owned(format!("{}{}", code, string))
@@ -591,12 +605,11 @@ pub fn get_parent_expr<'c>(cx: &'c LateContext<'_, '_>, e: &Expr) -> Option<&'c 
     })
 }
 
-pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: HirId) -> Option<&'tcx Block> {
+pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, hir_id: HirId) -> Option<&'tcx Block> {
     let map = &cx.tcx.hir();
-    let node_id = map.hir_to_node_id(node);
     let enclosing_node = map
-        .get_enclosing_scope(node_id)
-        .and_then(|enclosing_id| map.find(enclosing_id));
+        .get_enclosing_scope(hir_id)
+        .and_then(|enclosing_id| map.find_by_hir_id(enclosing_id));
     if let Some(node) = enclosing_node {
         match node {
             Node::Block(block) => Some(block),
@@ -671,7 +684,7 @@ pub fn is_adjusted(cx: &LateContext<'_, '_>, e: &Expr) -> bool {
 /// Returns the pre-expansion span if is this comes from an expansion of the
 /// macro `name`.
 /// See also `is_direct_expn_of`.
-pub fn is_expn_of(mut span: Span, name: &str) -> Option<Span> {
+pub fn is_expn_of(mut span: Span, name: Symbol) -> Option<Span> {
     loop {
         let span_name_span = span
             .ctxt()
@@ -696,7 +709,7 @@ pub fn is_expn_of(mut span: Span, name: &str) -> Option<Span> {
 /// `42` is considered expanded from `foo!` and `bar!` by `is_expn_of` but only
 /// `bar!` by
 /// `is_direct_expn_of`.
-pub fn is_direct_expn_of(span: Span, name: &str) -> Option<Span> {
+pub fn is_direct_expn_of(span: Span, name: Symbol) -> Option<Span> {
     let span_name_span = span
         .ctxt()
         .outer()
@@ -742,12 +755,25 @@ pub fn is_copy<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     ty.is_copy_modulo_regions(cx.tcx.global_tcx(), cx.param_env, DUMMY_SP)
 }
 
+/// Checks if an expression is constructing a tuple-like enum variant or struct
+pub fn is_ctor_function(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
+    if let ExprKind::Call(ref fun, _) = expr.node {
+        if let ExprKind::Path(ref qp) = fun.node {
+            return matches!(
+                cx.tables.qpath_res(qp, fun.hir_id),
+                def::Res::Def(DefKind::Variant, ..) | Res::Def(DefKind::Ctor(..), _)
+            );
+        }
+    }
+    false
+}
+
 /// Returns `true` if a pattern is refutable.
 pub fn is_refutable(cx: &LateContext<'_, '_>, pat: &Pat) -> bool {
     fn is_enum_variant(cx: &LateContext<'_, '_>, qpath: &QPath, id: HirId) -> bool {
         matches!(
-            cx.tables.qpath_def(qpath, id),
-            def::Def::Variant(..) | def::Def::Ctor(_, def::CtorOf::Variant, _)
+            cx.tables.qpath_res(qpath, id),
+            def::Res::Def(DefKind::Variant, ..) | Res::Def(DefKind::Ctor(def::CtorOf::Variant, _), _)
         )
     }
 
@@ -784,7 +810,7 @@ pub fn is_refutable(cx: &LateContext<'_, '_>, pat: &Pat) -> bool {
 /// Checks for the `#[automatically_derived]` attribute all `#[derive]`d
 /// implementations have.
 pub fn is_automatically_derived(attrs: &[ast::Attribute]) -> bool {
-    attr::contains_name(attrs, "automatically_derived")
+    attr::contains_name(attrs, *sym::automatically_derived)
 }
 
 /// Remove blocks around an expression.
@@ -819,7 +845,7 @@ pub fn is_self_ty(slf: &hir::Ty) -> bool {
     if_chain! {
         if let TyKind::Path(ref qp) = slf.node;
         if let QPath::Resolved(None, ref path) = *qp;
-        if let Def::SelfTy(..) = path.def;
+        if let Res::SelfTy(..) = path.res;
         then {
             return true
         }
@@ -840,7 +866,7 @@ pub fn is_try(expr: &Expr) -> Option<&Expr> {
             if match_qpath(path, &paths::RESULT_OK[1..]);
             if let PatKind::Binding(_, hir_id, _, None) = pat[0].node;
             if let ExprKind::Path(QPath::Resolved(None, ref path)) = arm.body.node;
-            if let Def::Local(lid) = path.def;
+            if let Res::Local(lid) = path.res;
             if lid == hir_id;
             then {
                 return true;
@@ -970,24 +996,24 @@ pub fn any_parent_is_automatically_derived(tcx: TyCtxt<'_, '_, '_>, node: HirId)
 }
 
 /// Returns true if ty has `iter` or `iter_mut` methods
-pub fn has_iter_method(cx: &LateContext<'_, '_>, probably_ref_ty: Ty<'_>) -> Option<&'static str> {
+pub fn has_iter_method(cx: &LateContext<'_, '_>, probably_ref_ty: Ty<'_>) -> Option<Symbol> {
     // FIXME: instead of this hard-coded list, we should check if `<adt>::iter`
     // exists and has the desired signature. Unfortunately FnCtxt is not exported
     // so we can't use its `lookup_method` method.
-    static INTO_ITER_COLLECTIONS: [&[&str]; 13] = [
-        &paths::VEC,
-        &paths::OPTION,
-        &paths::RESULT,
-        &paths::BTREESET,
-        &paths::BTREEMAP,
-        &paths::VEC_DEQUE,
-        &paths::LINKED_LIST,
-        &paths::BINARY_HEAP,
-        &paths::HASHSET,
-        &paths::HASHMAP,
-        &paths::PATH_BUF,
-        &paths::PATH,
-        &paths::RECEIVER,
+    let into_iter_collections: [&[Symbol]; 13] = [
+        &*paths::VEC,
+        &*paths::OPTION,
+        &*paths::RESULT,
+        &*paths::BTREESET,
+        &*paths::BTREEMAP,
+        &*paths::VEC_DEQUE,
+        &*paths::LINKED_LIST,
+        &*paths::BINARY_HEAP,
+        &*paths::HASHSET,
+        &*paths::HASHMAP,
+        &*paths::PATH_BUF,
+        &*paths::PATH,
+        &*paths::RECEIVER,
     ];
 
     let ty_to_check = match probably_ref_ty.sty {
@@ -996,15 +1022,15 @@ pub fn has_iter_method(cx: &LateContext<'_, '_>, probably_ref_ty: Ty<'_>) -> Opt
     };
 
     let def_id = match ty_to_check.sty {
-        ty::Array(..) => return Some("array"),
-        ty::Slice(..) => return Some("slice"),
+        ty::Array(..) => return Some(*sym::array),
+        ty::Slice(..) => return Some(*sym::slice),
         ty::Adt(adt, _) => adt.did,
         _ => return None,
     };
 
-    for path in &INTO_ITER_COLLECTIONS {
-        if cx.match_def_path(def_id, path) {
-            return Some(path.last().unwrap());
+    for path in &into_iter_collections {
+        if match_def_path(cx, def_id, path) {
+            return Some(*path.last().unwrap());
         }
     }
     None
@@ -1089,4 +1115,11 @@ mod test {
         let result = without_block_comments(vec!["foo", "bar", "baz"]);
         assert_eq!(result, vec!["foo", "bar", "baz"]);
     }
+}
+
+pub fn match_def_path<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, did: DefId, syms: &[Symbol]) -> bool {
+    // HACK: fix upstream `match_def_path` to take symbols
+    let syms: Vec<_> = syms.iter().map(|sym| sym.as_str()).collect();
+    let syms: Vec<_> = syms.iter().map(|sym| &**sym).collect();
+    cx.match_def_path(did, &syms)
 }

@@ -1,7 +1,7 @@
 use crate::reexport::*;
 use if_chain::if_chain;
 use itertools::Itertools;
-use rustc::hir::def::Def;
+use rustc::hir::def::{DefKind, Res};
 use rustc::hir::def_id;
 use rustc::hir::intravisit::{walk_block, walk_expr, walk_pat, walk_stmt, NestedVisitorMap, Visitor};
 use rustc::hir::*;
@@ -10,8 +10,9 @@ use rustc::middle::region;
 use rustc::{declare_lint_pass, declare_tool_lint};
 // use rustc::middle::region::CodeExtent;
 use crate::consts::{constant, Constant};
+use crate::utils::sym;
 use crate::utils::usage::mutated_variables;
-use crate::utils::{in_macro, sext, sugg};
+use crate::utils::{in_macro_or_desugar, sext, sugg};
 use rustc::middle::expr_use_visitor::*;
 use rustc::middle::mem_categorization::cmt_;
 use rustc::middle::mem_categorization::Categorization;
@@ -464,7 +465,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Loops {
     #[allow(clippy::too_many_lines)]
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         // we don't want to check expanded macros
-        if in_macro(expr.span) {
+        if in_macro_or_desugar(expr.span) {
             return;
         }
 
@@ -554,9 +555,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Loops {
             {
                 let iter_expr = &method_args[0];
                 let lhs_constructor = last_path_segment(qpath);
-                if method_path.ident.name == "next"
-                    && match_trait_method(cx, match_expr, &paths::ITERATOR)
-                    && lhs_constructor.ident.name == "Some"
+                if method_path.ident.name == *sym::next
+                    && match_trait_method(cx, match_expr, &*paths::ITERATOR)
+                    && lhs_constructor.ident.name == *sym::Some
                     && (pat_args.is_empty()
                         || !is_refutable(cx, &pat_args[0])
                             && !is_used_inside(cx, iter_expr, &arms[0].body)
@@ -593,7 +594,10 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Loops {
     fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, stmt: &'tcx Stmt) {
         if let StmtKind::Semi(ref expr) = stmt.node {
             if let ExprKind::MethodCall(ref method, _, ref args) = expr.node {
-                if args.len() == 1 && method.ident.name == "collect" && match_trait_method(cx, expr, &paths::ITERATOR) {
+                if args.len() == 1
+                    && method.ident.name == *sym::collect
+                    && match_trait_method(cx, expr, &*paths::ITERATOR)
+                {
                     span_lint(
                         cx,
                         UNUSED_COLLECT,
@@ -676,7 +680,8 @@ fn never_loop_expr(expr: &Expr, main_loop_id: HirId) -> NeverLoopResult {
         | ExprKind::Field(ref e, _)
         | ExprKind::AddrOf(_, ref e)
         | ExprKind::Struct(_, _, Some(ref e))
-        | ExprKind::Repeat(ref e, _) => never_loop_expr(e, main_loop_id),
+        | ExprKind::Repeat(ref e, _)
+        | ExprKind::DropTemps(ref e) => never_loop_expr(e, main_loop_id),
         ExprKind::Array(ref es) | ExprKind::MethodCall(_, _, ref es) | ExprKind::Tup(ref es) => {
             never_loop_expr_all(&mut es.iter(), main_loop_id)
         },
@@ -685,14 +690,6 @@ fn never_loop_expr(expr: &Expr, main_loop_id: HirId) -> NeverLoopResult {
         | ExprKind::Assign(ref e1, ref e2)
         | ExprKind::AssignOp(_, ref e1, ref e2)
         | ExprKind::Index(ref e1, ref e2) => never_loop_expr_all(&mut [&**e1, &**e2].iter().cloned(), main_loop_id),
-        ExprKind::If(ref e, ref e2, ref e3) => {
-            let e1 = never_loop_expr(e, main_loop_id);
-            let e2 = never_loop_expr(e2, main_loop_id);
-            let e3 = e3
-                .as_ref()
-                .map_or(NeverLoopResult::Otherwise, |e| never_loop_expr(e, main_loop_id));
-            combine_seq(e1, combine_branches(e2, e3))
-        },
         ExprKind::Loop(ref b, _, _) => {
             // Break can come from the inner loop so remove them.
             absorb_break(&never_loop_block(b, main_loop_id))
@@ -777,7 +774,7 @@ fn same_var<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &Expr, var: HirId) -> bo
         if let ExprKind::Path(ref qpath) = expr.node;
         if let QPath::Resolved(None, ref path) = *qpath;
         if path.segments.len() == 1;
-        if let Def::Local(local_id) = cx.tables.qpath_def(qpath, expr.hir_id);
+        if let Res::Local(local_id) = cx.tables.qpath_res(qpath, expr.hir_id);
         // our variable!
         if local_id == var;
         then {
@@ -818,7 +815,7 @@ fn is_slice_like<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'_>) -> bool {
         _ => false,
     };
 
-    is_slice || match_type(cx, ty, &paths::VEC) || match_type(cx, ty, &paths::VEC_DEQUE)
+    is_slice || match_type(cx, ty, &*paths::VEC) || match_type(cx, ty, &*paths::VEC_DEQUE)
 }
 
 fn get_fixed_offset_var<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &Expr, var: HirId) -> Option<FixedOffsetVar> {
@@ -881,7 +878,7 @@ fn fetch_cloned_fixed_offset_var<'a, 'tcx>(
 ) -> Option<FixedOffsetVar> {
     if_chain! {
         if let ExprKind::MethodCall(ref method, _, ref args) = expr.node;
-        if method.ident.name == "clone";
+        if method.ident.name == *sym::clone;
         if args.len() == 1;
         if let Some(arg) = args.get(0);
         then {
@@ -987,7 +984,7 @@ fn detect_manual_memcpy<'a, 'tcx>(
                 if let Some(end) = *end {
                     if_chain! {
                         if let ExprKind::MethodCall(ref method, _, ref len_args) = end.node;
-                        if method.ident.name == "len";
+                        if method.ident.name == *sym::len;
                         if len_args.len() == 1;
                         if let Some(arg) = len_args.get(0);
                         if snippet(cx, arg.span, "??") == var_name;
@@ -1064,7 +1061,7 @@ fn check_for_loop_range<'a, 'tcx>(
     body: &'tcx Expr,
     expr: &'tcx Expr,
 ) {
-    if in_macro(expr.span) {
+    if in_macro_or_desugar(expr.span) {
         return;
     }
 
@@ -1229,7 +1226,7 @@ fn is_len_call(expr: &Expr, var: Name) -> bool {
     if_chain! {
         if let ExprKind::MethodCall(ref method, _, ref len_args) = expr.node;
         if len_args.len() == 1;
-        if method.ident.name == "len";
+        if method.ident.name == *sym::len;
         if let ExprKind::Path(QPath::Resolved(_, ref path)) = len_args[0].node;
         if path.segments.len() == 1;
         if path.segments[0].ident.name == var;
@@ -1357,7 +1354,7 @@ fn check_for_loop_arg(cx: &LateContext<'_, '_>, pat: &Pat, arg: &Expr, expr: &Ex
                 if is_ref_iterable_type(cx, &args[0]) {
                     lint_iter_method(cx, args, arg, method_name);
                 }
-            } else if method_name == "into_iter" && match_trait_method(cx, arg, &paths::INTO_ITERATOR) {
+            } else if method_name == "into_iter" && match_trait_method(cx, arg, &*paths::INTO_ITERATOR) {
                 let def_id = cx.tables.type_dependent_def_id(arg.hir_id).unwrap();
                 let substs = cx.tables.node_substs(arg.hir_id);
                 let method_type = cx.tcx.type_of(def_id).subst(cx.tcx, substs);
@@ -1385,7 +1382,7 @@ fn check_for_loop_arg(cx: &LateContext<'_, '_>, pat: &Pat, arg: &Expr, expr: &Ex
                         applicability,
                     );
                 }
-            } else if method_name == "next" && match_trait_method(cx, arg, &paths::ITERATOR) {
+            } else if method_name == "next" && match_trait_method(cx, arg, &*paths::ITERATOR) {
                 span_lint(
                     cx,
                     ITER_NEXT_LOOP,
@@ -1405,7 +1402,7 @@ fn check_for_loop_arg(cx: &LateContext<'_, '_>, pat: &Pat, arg: &Expr, expr: &Ex
 /// Checks for `for` loops over `Option`s and `Result`s.
 fn check_arg_type(cx: &LateContext<'_, '_>, pat: &Pat, arg: &Expr) {
     let ty = cx.tables.expr_ty(arg);
-    if match_type(cx, ty, &paths::OPTION) {
+    if match_type(cx, ty, &*paths::OPTION) {
         span_help_and_lint(
             cx,
             FOR_LOOP_OVER_OPTION,
@@ -1421,7 +1418,7 @@ fn check_arg_type(cx: &LateContext<'_, '_>, pat: &Pat, arg: &Expr) {
                 snippet(cx, arg.span, "_")
             ),
         );
-    } else if match_type(cx, ty, &paths::RESULT) {
+    } else if match_type(cx, ty, &*paths::RESULT) {
         span_help_and_lint(
             cx,
             FOR_LOOP_OVER_RESULT,
@@ -1458,54 +1455,46 @@ fn check_for_loop_explicit_counter<'a, 'tcx>(
 
     // For each candidate, check the parent block to see if
     // it's initialized to zero at the start of the loop.
-    let map = &cx.tcx.hir();
-    let expr_node_id = map.hir_to_node_id(expr.hir_id);
-    let parent_scope = map
-        .get_enclosing_scope(expr_node_id)
-        .and_then(|id| map.get_enclosing_scope(id));
-    if let Some(parent_id) = parent_scope {
-        if let Node::Block(block) = map.get(parent_id) {
-            for (id, _) in visitor.states.iter().filter(|&(_, v)| *v == VarState::IncrOnce) {
-                let mut visitor2 = InitializeVisitor {
-                    cx,
-                    end_expr: expr,
-                    var_id: *id,
-                    state: VarState::IncrOnce,
-                    name: None,
-                    depth: 0,
-                    past_loop: false,
-                };
-                walk_block(&mut visitor2, block);
+    if let Some(block) = get_enclosing_block(&cx, expr.hir_id) {
+        for (id, _) in visitor.states.iter().filter(|&(_, v)| *v == VarState::IncrOnce) {
+            let mut visitor2 = InitializeVisitor {
+                cx,
+                end_expr: expr,
+                var_id: *id,
+                state: VarState::IncrOnce,
+                name: None,
+                depth: 0,
+                past_loop: false,
+            };
+            walk_block(&mut visitor2, block);
 
-                if visitor2.state == VarState::Warn {
-                    if let Some(name) = visitor2.name {
-                        let mut applicability = Applicability::MachineApplicable;
-                        span_lint_and_sugg(
-                            cx,
-                            EXPLICIT_COUNTER_LOOP,
-                            expr.span,
-                            &format!("the variable `{}` is used as a loop counter.", name),
-                            "consider using",
-                            format!(
-                                "for ({}, {}) in {}.enumerate()",
-                                name,
-                                snippet_with_applicability(cx, pat.span, "item", &mut applicability),
-                                if higher::range(cx, arg).is_some() {
-                                    format!(
-                                        "({})",
-                                        snippet_with_applicability(cx, arg.span, "_", &mut applicability)
-                                    )
-                                } else {
-                                    format!(
-                                        "{}",
-                                        sugg::Sugg::hir_with_applicability(cx, arg, "_", &mut applicability)
-                                            .maybe_par()
-                                    )
-                                }
-                            ),
-                            applicability,
-                        );
-                    }
+            if visitor2.state == VarState::Warn {
+                if let Some(name) = visitor2.name {
+                    let mut applicability = Applicability::MachineApplicable;
+                    span_lint_and_sugg(
+                        cx,
+                        EXPLICIT_COUNTER_LOOP,
+                        expr.span,
+                        &format!("the variable `{}` is used as a loop counter.", name),
+                        "consider using",
+                        format!(
+                            "for ({}, {}) in {}.enumerate()",
+                            name,
+                            snippet_with_applicability(cx, pat.span, "item", &mut applicability),
+                            if higher::range(cx, arg).is_some() {
+                                format!(
+                                    "({})",
+                                    snippet_with_applicability(cx, arg.span, "_", &mut applicability)
+                                )
+                            } else {
+                                format!(
+                                    "{}",
+                                    sugg::Sugg::hir_with_applicability(cx, arg, "_", &mut applicability).maybe_par()
+                                )
+                            }
+                        ),
+                        applicability,
+                    );
                 }
             }
         }
@@ -1542,7 +1531,7 @@ fn check_for_loop_over_map_kv<'a, 'tcx>(
                 _ => arg,
             };
 
-            if match_type(cx, ty, &paths::HASHMAP) || match_type(cx, ty, &paths::BTREEMAP) {
+            if match_type(cx, ty, &*paths::HASHMAP) || match_type(cx, ty, &*paths::BTREEMAP) {
                 span_lint_and_then(
                     cx,
                     FOR_KV_MAP,
@@ -1644,8 +1633,8 @@ fn check_for_mutability(cx: &LateContext<'_, '_>, bound: &Expr) -> Option<HirId>
         if let ExprKind::Path(ref qpath) = bound.node;
         if let QPath::Resolved(None, _) = *qpath;
         then {
-            let def = cx.tables.qpath_def(qpath, bound.hir_id);
-            if let Def::Local(node_id) = def {
+            let res = cx.tables.qpath_res(qpath, bound.hir_id);
+            if let Res::Local(node_id) = res {
                 let node_str = cx.tcx.hir().get_by_hir_id(node_id);
                 if_chain! {
                     if let Node::Binding(pat) = node_str;
@@ -1779,9 +1768,9 @@ impl<'a, 'tcx> VarVisitor<'a, 'tcx> {
                     if self.prefer_mutable {
                         self.indexed_mut.insert(seqvar.segments[0].ident.name);
                     }
-                    let def = self.cx.tables.qpath_def(seqpath, seqexpr.hir_id);
-                    match def {
-                        Def::Local(hir_id) | Def::Upvar(hir_id, ..) => {
+                    let res = self.cx.tables.qpath_res(seqpath, seqexpr.hir_id);
+                    match res {
+                        Res::Local(hir_id) | Res::Upvar(hir_id, ..) => {
                             let parent_id = self.cx.tcx.hir().get_parent_item(expr.hir_id);
                             let parent_def_id = self.cx.tcx.hir().local_def_id_from_hir_id(parent_id);
                             let extent = self.cx.tcx.region_scope_tree(parent_def_id).var_scope(hir_id.local_id);
@@ -1796,7 +1785,7 @@ impl<'a, 'tcx> VarVisitor<'a, 'tcx> {
                             }
                             return false;  // no need to walk further *on the variable*
                         }
-                        Def::Static(..) | Def::Const(..) => {
+                        Res::Def(DefKind::Static, ..) | Res::Def(DefKind::Const, ..) => {
                             if indexed_indirectly {
                                 self.indexed_indirectly.insert(seqvar.segments[0].ident.name, None);
                             }
@@ -1822,8 +1811,8 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
         if_chain! {
             // a range index op
             if let ExprKind::MethodCall(ref meth, _, ref args) = expr.node;
-            if (meth.ident.name == "index" && match_trait_method(self.cx, expr, &paths::INDEX))
-                || (meth.ident.name == "index_mut" && match_trait_method(self.cx, expr, &paths::INDEX_MUT));
+            if (meth.ident.name == *sym::index && match_trait_method(self.cx, expr, &*paths::INDEX))
+                || (meth.ident.name == *sym::index_mut && match_trait_method(self.cx, expr, &*paths::INDEX_MUT));
             if !self.check(&args[1], &args[0], expr);
             then { return }
         }
@@ -1841,14 +1830,14 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
             if let QPath::Resolved(None, ref path) = *qpath;
             if path.segments.len() == 1;
             then {
-                match self.cx.tables.qpath_def(qpath, expr.hir_id) {
-                    Def::Upvar(local_id, ..) => {
+                match self.cx.tables.qpath_res(qpath, expr.hir_id) {
+                    Res::Upvar(local_id, ..) => {
                         if local_id == self.var {
                             // we are not indexing anything, record that
                             self.nonindex = true;
                         }
                     }
-                    Def::Local(local_id) =>
+                    Res::Local(local_id) =>
                     {
 
                         if local_id == self.var {
@@ -1978,14 +1967,14 @@ fn is_ref_iterable_type(cx: &LateContext<'_, '_>, e: &Expr) -> bool {
     // will allow further borrows afterwards
     let ty = cx.tables.expr_ty(e);
     is_iterable_array(ty, cx) ||
-    match_type(cx, ty, &paths::VEC) ||
-    match_type(cx, ty, &paths::LINKED_LIST) ||
-    match_type(cx, ty, &paths::HASHMAP) ||
-    match_type(cx, ty, &paths::HASHSET) ||
-    match_type(cx, ty, &paths::VEC_DEQUE) ||
-    match_type(cx, ty, &paths::BINARY_HEAP) ||
-    match_type(cx, ty, &paths::BTREEMAP) ||
-    match_type(cx, ty, &paths::BTREESET)
+    match_type(cx, ty, &*paths::VEC) ||
+    match_type(cx, ty, &*paths::LINKED_LIST) ||
+    match_type(cx, ty, &*paths::HASHMAP) ||
+    match_type(cx, ty, &*paths::HASHSET) ||
+    match_type(cx, ty, &*paths::VEC_DEQUE) ||
+    match_type(cx, ty, &*paths::BINARY_HEAP) ||
+    match_type(cx, ty, &*paths::BTREEMAP) ||
+    match_type(cx, ty, &*paths::BTREESET)
 }
 
 fn is_iterable_array(ty: Ty<'_>, cx: &LateContext<'_, '_>) -> bool {
@@ -2042,7 +2031,7 @@ fn is_simple_break_expr(expr: &Expr) -> bool {
 // To trigger the EXPLICIT_COUNTER_LOOP lint, a variable must be
 // incremented exactly once in the loop body, and initialized to zero
 // at the start of the loop.
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 enum VarState {
     Initial,  // Not examined yet
     IncrOnce, // Incremented exactly once, may be a loop counter
@@ -2194,8 +2183,8 @@ impl<'a, 'tcx> Visitor<'tcx> for InitializeVisitor<'a, 'tcx> {
 
 fn var_def_id(cx: &LateContext<'_, '_>, expr: &Expr) -> Option<HirId> {
     if let ExprKind::Path(ref qpath) = expr.node {
-        let path_res = cx.tables.qpath_def(qpath, expr.hir_id);
-        if let Def::Local(node_id) = path_res {
+        let path_res = cx.tables.qpath_res(qpath, expr.hir_id);
+        if let Res::Local(node_id) = path_res {
             return Some(node_id);
         }
     }
@@ -2211,7 +2200,7 @@ fn is_loop(expr: &Expr) -> bool {
 
 fn is_conditional(expr: &Expr) -> bool {
     match expr.node {
-        ExprKind::If(..) | ExprKind::Match(..) => true,
+        ExprKind::Match(..) => true,
         _ => false,
     }
 }
@@ -2387,13 +2376,13 @@ impl<'a, 'tcx> VarCollectorVisitor<'a, 'tcx> {
         if_chain! {
             if let ExprKind::Path(ref qpath) = ex.node;
             if let QPath::Resolved(None, _) = *qpath;
-            let def = self.cx.tables.qpath_def(qpath, ex.hir_id);
+            let res = self.cx.tables.qpath_res(qpath, ex.hir_id);
             then {
-                match def {
-                    Def::Local(node_id) | Def::Upvar(node_id, ..) => {
+                match res {
+                    Res::Local(node_id) | Res::Upvar(node_id, ..) => {
                         self.ids.insert(node_id);
                     },
-                    Def::Static(def_id) => {
+                    Res::Def(DefKind::Static, def_id) => {
                         let mutable = self.cx.tcx.is_mutable_static(def_id);
                         self.def_ids.insert(def_id, mutable);
                     },
@@ -2426,16 +2415,16 @@ fn check_needless_collect<'a, 'tcx>(expr: &'tcx Expr, cx: &LateContext<'a, 'tcx>
     if_chain! {
         if let ExprKind::MethodCall(ref method, _, ref args) = expr.node;
         if let ExprKind::MethodCall(ref chain_method, _, _) = args[0].node;
-        if chain_method.ident.name == "collect" && match_trait_method(cx, &args[0], &paths::ITERATOR);
+        if chain_method.ident.name == *sym::collect && match_trait_method(cx, &args[0], &*paths::ITERATOR);
         if let Some(ref generic_args) = chain_method.args;
         if let Some(GenericArg::Type(ref ty)) = generic_args.args.get(0);
         then {
             let ty = cx.tables.node_type(ty.hir_id);
-            if match_type(cx, ty, &paths::VEC) ||
-                match_type(cx, ty, &paths::VEC_DEQUE) ||
-                match_type(cx, ty, &paths::BTREEMAP) ||
-                match_type(cx, ty, &paths::HASHMAP) {
-                if method.ident.name == "len" {
+            if match_type(cx, ty, &*paths::VEC) ||
+                match_type(cx, ty, &*paths::VEC_DEQUE) ||
+                match_type(cx, ty, &*paths::BTREEMAP) ||
+                match_type(cx, ty, &*paths::HASHMAP) {
+                if method.ident.name == *sym::len {
                     let span = shorten_needless_collect_span(expr);
                     span_lint_and_then(cx, NEEDLESS_COLLECT, span, NEEDLESS_COLLECT_MSG, |db| {
                         db.span_suggestion(
@@ -2446,7 +2435,7 @@ fn check_needless_collect<'a, 'tcx>(expr: &'tcx Expr, cx: &LateContext<'a, 'tcx>
                         );
                     });
                 }
-                if method.ident.name == "is_empty" {
+                if method.ident.name == *sym::is_empty {
                     let span = shorten_needless_collect_span(expr);
                     span_lint_and_then(cx, NEEDLESS_COLLECT, span, NEEDLESS_COLLECT_MSG, |db| {
                         db.span_suggestion(
@@ -2457,7 +2446,7 @@ fn check_needless_collect<'a, 'tcx>(expr: &'tcx Expr, cx: &LateContext<'a, 'tcx>
                         );
                     });
                 }
-                if method.ident.name == "contains" {
+                if method.ident.name == *sym::contains {
                     let contains_arg = snippet(cx, args[1].span, "??");
                     let span = shorten_needless_collect_span(expr);
                     span_lint_and_then(cx, NEEDLESS_COLLECT, span, NEEDLESS_COLLECT_MSG, |db| {

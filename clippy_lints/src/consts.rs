@@ -1,8 +1,8 @@
 #![allow(clippy::float_cmp)]
 
-use crate::utils::{clip, sext, unsext};
+use crate::utils::{clip, higher, sext, unsext};
 use if_chain::if_chain;
-use rustc::hir::def::Def;
+use rustc::hir::def::{DefKind, Res};
 use rustc::hir::*;
 use rustc::lint::LateContext;
 use rustc::ty::subst::{Subst, SubstsRef};
@@ -15,7 +15,6 @@ use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use syntax::ast::{FloatTy, LitKind};
-use syntax::ptr::P;
 use syntax_pos::symbol::{LocalInternedString, Symbol};
 
 /// A `LitKind`-like enum to fold constant `Expr`s into.
@@ -222,10 +221,12 @@ pub struct ConstEvalLateContext<'a, 'tcx: 'a> {
 impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
     /// Simple constant folding: Insert an expression, get a constant or none.
     pub fn expr(&mut self, e: &Expr) -> Option<Constant> {
+        if let Some((ref cond, ref then, otherwise)) = higher::if_block(&e) {
+            return self.ifthenelse(cond, then, otherwise);
+        }
         match e.node {
             ExprKind::Path(ref qpath) => self.fetch_path(qpath, e.hir_id),
             ExprKind::Block(ref block, _) => self.block(block),
-            ExprKind::If(ref cond, ref then, ref otherwise) => self.ifthenelse(cond, then, otherwise),
             ExprKind::Lit(ref lit) => Some(lit_to_constant(&lit.node, self.tables.expr_ty(e))),
             ExprKind::Array(ref vec) => self.multi(vec).map(Constant::Vec),
             ExprKind::Tup(ref tup) => self.multi(tup).map(Constant::Tuple),
@@ -247,8 +248,8 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
                 if_chain! {
                     if args.is_empty();
                     if let ExprKind::Path(qpath) = &callee.node;
-                    let def = self.tables.qpath_def(qpath, callee.hir_id);
-                    if let Some(def_id) = def.opt_def_id();
+                    let res = self.tables.qpath_res(qpath, callee.hir_id);
+                    if let Some(def_id) = res.opt_def_id();
                     let def_path = self.lcx.get_def_path(def_id)
                         .iter()
                         .map(LocalInternedString::get)
@@ -322,9 +323,9 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
     fn fetch_path(&mut self, qpath: &QPath, id: HirId) -> Option<Constant> {
         use rustc::mir::interpret::GlobalId;
 
-        let def = self.tables.qpath_def(qpath, id);
-        match def {
-            Def::Const(def_id) | Def::AssociatedConst(def_id) => {
+        let res = self.tables.qpath_res(qpath, id);
+        match res {
+            Res::Def(DefKind::Const, def_id) | Res::Def(DefKind::AssociatedConst, def_id) => {
                 let substs = self.tables.node_substs(id);
                 let substs = if self.substs.is_empty() {
                     substs
@@ -338,13 +339,13 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
                 };
 
                 let result = self.lcx.tcx.const_eval(self.param_env.and(gid)).ok()?;
-                let ret = miri_to_const(self.lcx.tcx, &result);
-                if ret.is_some() {
+                let result = miri_to_const(self.lcx.tcx, &result);
+                if result.is_some() {
                     self.needed_resolution = true;
                 }
-                ret
+                result
             },
-            // FIXME: cover all useable cases.
+            // FIXME: cover all usable cases.
             _ => None,
         }
     }
@@ -358,10 +359,10 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
         }
     }
 
-    fn ifthenelse(&mut self, cond: &Expr, then: &P<Expr>, otherwise: &Option<P<Expr>>) -> Option<Constant> {
+    fn ifthenelse(&mut self, cond: &Expr, then: &Expr, otherwise: Option<&Expr>) -> Option<Constant> {
         if let Some(Constant::Bool(b)) = self.expr(cond) {
             if b {
-                self.expr(&**then)
+                self.expr(&*then)
             } else {
                 otherwise.as_ref().and_then(|expr| self.expr(expr))
             }

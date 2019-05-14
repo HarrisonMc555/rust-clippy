@@ -186,7 +186,9 @@ fn check_pat<'a, 'tcx>(
                 if let ExprKind::Struct(_, ref efields, _) = init_struct.node {
                     for field in pfields {
                         let name = field.node.ident.name;
-                        let efield = efields.iter().find(|f| f.ident.name == name).map(|f| &*f.expr);
+                        let efield = efields
+                            .iter()
+                            .find_map(|f| if f.ident.name == name { Some(&*f.expr) } else { None });
                         check_pat(cx, &field.node.pat, efield, span, bindings);
                     }
                 } else {
@@ -315,13 +317,6 @@ fn check_expr<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr, bindings: 
         ExprKind::Array(ref v) | ExprKind::Tup(ref v) => {
             for e in v {
                 check_expr(cx, e, bindings)
-            }
-        },
-        ExprKind::If(ref cond, ref then, ref otherwise) => {
-            check_expr(cx, cond, bindings);
-            check_expr(cx, &**then, bindings);
-            if let Some(ref o) = *otherwise {
-                check_expr(cx, o, bindings);
             }
         },
         ExprKind::While(ref cond, ref block, _) => {
