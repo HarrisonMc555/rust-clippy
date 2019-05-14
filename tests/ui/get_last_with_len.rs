@@ -1,4 +1,4 @@
-#![warn(clippy::use_last)]
+#![warn(clippy::get_last_with_len)]
 
 fn dont_use_last() {
     let x = vec![2, 3, 5];

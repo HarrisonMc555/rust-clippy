@@ -185,6 +185,7 @@ pub mod fallible_impl_from;
 pub mod format;
 pub mod formatting;
 pub mod functions;
+pub mod get_last_with_len;
 pub mod identity_conversion;
 pub mod identity_op;
 pub mod if_not_else;
@@ -266,7 +267,6 @@ pub mod unsafe_removed_from_name;
 pub mod unused_io_amount;
 pub mod unused_label;
 pub mod unwrap;
-pub mod use_last;
 pub mod use_self;
 pub mod vec;
 pub mod wildcard_dependencies;
@@ -574,7 +574,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
     reg.register_late_lint_pass(box types::RefToMut);
     reg.register_late_lint_pass(box assertions_on_constants::AssertionsOnConstants);
     reg.register_late_lint_pass(box missing_const_for_fn::MissingConstForFn);
-    reg.register_late_lint_pass(box use_last::UseLast);
     reg.register_late_lint_pass(box transmuting_null::TransmutingNull);
     reg.register_late_lint_pass(box path_buf_push_overwrite::PathBufPushOverwrite);
 
@@ -708,6 +707,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         formatting::SUSPICIOUS_ELSE_FORMATTING,
         functions::NOT_UNSAFE_PTR_ARG_DEREF,
         functions::TOO_MANY_ARGUMENTS,
+        get_last_with_len::GET_LAST_WITH_LEN,
         identity_conversion::IDENTITY_CONVERSION,
         identity_op::IDENTITY_OP,
         indexing_slicing::OUT_OF_BOUNDS_INDEXING,
@@ -872,7 +872,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         unsafe_removed_from_name::UNSAFE_REMOVED_FROM_NAME,
         unused_io_amount::UNUSED_IO_AMOUNT,
         unused_label::UNUSED_LABEL,
-        use_last::USE_LAST,
         vec::USELESS_VEC,
         write::PRINTLN_EMPTY_STRING,
         write::PRINT_LITERAL,
@@ -980,6 +979,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         explicit_write::EXPLICIT_WRITE,
         format::USELESS_FORMAT,
         functions::TOO_MANY_ARGUMENTS,
+        get_last_with_len::GET_LAST_WITH_LEN,
         identity_conversion::IDENTITY_CONVERSION,
         identity_op::IDENTITY_OP,
         int_plus_one::INT_PLUS_ONE,
@@ -1035,7 +1035,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
         types::UNNECESSARY_CAST,
         types::VEC_BOX,
         unused_label::UNUSED_LABEL,
-        use_last::USE_LAST,
         zero_div_zero::ZERO_DIVIDED_BY_ZERO,
     ]);
 

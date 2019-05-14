@@ -37,12 +37,12 @@ declare_clippy_lint! {
     /// let x = vec![2, 3, 5];
     /// let last_element = x.last();
     /// ```
-    pub USE_LAST,
+    pub GET_LAST_WITH_LEN,
     complexity,
     "Using `x.get(x.len() - 1)` when `x.last()` is correct and simpler"
 }
 
-declare_lint_pass!(UseLast => [USE_LAST]);
+declare_lint_pass!(UseLast => [GET_LAST_WITH_LEN]);
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
@@ -76,17 +76,18 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if let LitKind::Int(rhs_value, ..) = rhs_lit.node;
             if rhs_value == 1;
 
-            let mut applicability = Applicability::MachineApplicable;
-            let vec_name = snippet_with_applicability(
-                cx, struct_calling_on.span, "vec", &mut applicability);
 
             then {
+                let mut applicability = Applicability::MachineApplicable;
+                let vec_name = snippet_with_applicability(cx, struct_calling_on.span, "vec",
+                                                          &mut applicability);
+
                 span_lint_and_sugg(
                     cx,
-                    USE_LAST,
+                    GET_LAST_WITH_LEN,
                     expr.span,
-                    &format!("Use `{}.last()` instead of `{}.get({}.len() - 1)`",
-                             vec_name, vec_name, vec_name),
+                    &format!("Use `{}.last()` instead of `{}.get({}.len() - 1)`", vec_name,
+                             vec_name, vec_name),
                     "try",
                     format!("{}.last()", vec_name),
                     applicability,
