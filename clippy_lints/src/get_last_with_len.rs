@@ -60,7 +60,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
 
             // Argument to "get" is a subtraction
             if let Some(get_index_arg) = args.get(1);
-            if let ExprKind::Binary(Spanned{node: BinOpKind::Sub, span: _},
+            if let ExprKind::Binary(Spanned{node: BinOpKind::Sub, ..},
                                     lhs, rhs) = &get_index_arg.node;
 
             // LHS of subtraction is "x.len()"
