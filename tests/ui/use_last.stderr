@@ -1,8 +1,8 @@
 error: Use `x.last()` instead of `x.get(x.len() - 1)`
-  --> $DIR/use_last.rs:5:24
+  --> $DIR/use_last.rs:5:13
    |
-LL |     let last_element = x.get(x.len() - 1); // ~ERROR Use x.last()
-   |                        ^^^^^^^^^^^^^^^^^^ help: try: `x.last()`
+LL |     let _ = x.get(x.len() - 1); // ~ERROR Use x.last()
+   |             ^^^^^^^^^^^^^^^^^^ help: try: `x.last()`
    |
    = note: `-D clippy::use-last` implied by `-D warnings`
 
