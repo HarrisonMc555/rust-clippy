@@ -1,4 +1,4 @@
-error: Use `x.last()` instead of `x.get(x.len() - 1)`
+error: accessing last element with `x.get(x.len() - 1)`
   --> $DIR/get_last_with_len.rs:7:13
    |
 LL |     let _ = x.get(x.len() - 1); // ~ERROR Use x.last()
