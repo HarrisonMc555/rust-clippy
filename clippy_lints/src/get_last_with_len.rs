@@ -42,9 +42,9 @@ declare_clippy_lint! {
     "Using `x.get(x.len() - 1)` when `x.last()` is correct and simpler"
 }
 
-declare_lint_pass!(UseLast => [GET_LAST_WITH_LEN]);
+declare_lint_pass!(GetLastWithLen => [GET_LAST_WITH_LEN]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for GetLastWithLen {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
             // Is a method call

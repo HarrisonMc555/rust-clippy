@@ -492,6 +492,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry<'_>, conf: &Conf) {
     reg.register_late_lint_pass(box types::CharLitAsU8);
     reg.register_late_lint_pass(box vec::UselessVec);
     reg.register_late_lint_pass(box drop_bounds::DropBounds);
+    reg.register_late_lint_pass(box get_last_with_len::GetLastWithLen);
     reg.register_late_lint_pass(box drop_forget_ref::DropForgetRef);
     reg.register_late_lint_pass(box empty_enum::EmptyEnum);
     reg.register_late_lint_pass(box types::AbsurdExtremeComparisons);
