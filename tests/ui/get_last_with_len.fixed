@@ -4,7 +4,7 @@
 
 fn dont_use_last() {
     let x = vec![2, 3, 5];
-    let _ = x.get(x.len() - 1); // ~ERROR Use x.last()
+    let _ = x.last(); // ~ERROR Use x.last()
 }
 
 fn indexing_two_from_end() {
