@@ -76,11 +76,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseLast {
             if let LitKind::Int(rhs_value, ..) = rhs_lit.node;
             if rhs_value == 1;
 
-
             then {
                 let mut applicability = Applicability::MachineApplicable;
-                let vec_name = snippet_with_applicability(cx, struct_calling_on.span, "vec",
-                                                          &mut applicability);
+                let vec_name = snippet_with_applicability(
+                    cx,
+                    struct_calling_on.span, "vec",
+                    &mut applicability);
 
                 span_lint_and_sugg(
                     cx,
