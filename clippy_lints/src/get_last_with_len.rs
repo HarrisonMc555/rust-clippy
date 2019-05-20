@@ -81,13 +81,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for GetLastWithLen {
                 let vec_name = snippet_with_applicability(
                     cx,
                     struct_calling_on.span, "vec",
-                    &mut applicability);
+                    &mut applicability,
+                );
 
                 span_lint_and_sugg(
                     cx,
                     GET_LAST_WITH_LEN,
                     expr.span,
-                    &format!("accessing last element with `{}.get({}.len() - 1)`",
+                    &format!("accessing last element with `{0}.get({0}.len() - 1)`", vec_name),
                              vec_name,
                              vec_name),
                     "try",
