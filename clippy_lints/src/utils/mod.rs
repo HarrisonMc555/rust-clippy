@@ -39,13 +39,13 @@ use rustc::ty::{
     subst::Kind,
     Binder, Ty, TyCtxt,
 };
-use rustc_data_structures::sync::Lrc;
 use rustc_errors::Applicability;
+use smallvec::SmallVec;
 use syntax::ast::{self, LitKind};
 use syntax::attr;
 use syntax::ext::hygiene::ExpnFormat;
 use syntax::source_map::{Span, DUMMY_SP};
-use syntax::symbol::{keywords, Symbol};
+use syntax::symbol::{kw, Symbol};
 
 use crate::reexport::*;
 
@@ -248,7 +248,8 @@ pub fn path_to_res(cx: &LateContext<'_, '_>, path: &[&str]) -> Option<(def::Res)
                 None => return None,
             };
 
-            for item in mem::replace(&mut items, Lrc::new(vec![])).iter() {
+            let result = SmallVec::<[_; 8]>::new();
+            for item in mem::replace(&mut items, cx.tcx.arena.alloc_slice(&result)).iter() {
                 if item.ident.name.as_str() == *segment {
                     if path_it.peek().is_none() {
                         return Some(item.res);
@@ -839,7 +840,7 @@ pub fn remove_blocks(expr: &Expr) -> &Expr {
 
 pub fn is_self(slf: &Arg) -> bool {
     if let PatKind::Binding(.., name, _) = slf.pat.node {
-        name.name == keywords::SelfLower.name()
+        name.name == kw::SelfLower
     } else {
         false
     }
@@ -1122,5 +1123,7 @@ mod test {
 }
 
 pub fn match_def_path<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, did: DefId, syms: &[&str]) -> bool {
+    // HACK: find a way to use symbols from clippy or just go fully to diagnostic items
+    let syms: Vec<_> = syms.iter().map(|sym| Symbol::intern(sym)).collect();
     cx.match_def_path(did, &syms)
 }
