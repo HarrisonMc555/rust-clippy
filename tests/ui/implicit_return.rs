@@ -1,10 +1,14 @@
+// run-rustfix
+
 #![warn(clippy::implicit_return)]
+#![allow(clippy::needless_return, unused)]
 
 fn test_end_of_fn() -> bool {
     if true {
         // no error!
         return true;
     }
+
     true
 }
 
@@ -17,7 +21,6 @@ fn test_if_block() -> bool {
     }
 }
 
-#[allow(clippy::match_bool)]
 #[rustfmt::skip]
 fn test_match(x: bool) -> bool {
     match x {
@@ -26,7 +29,7 @@ fn test_match(x: bool) -> bool {
     }
 }
 
-#[allow(clippy::match_bool, clippy::needless_return)]
+#[allow(clippy::needless_return)]
 fn test_match_with_unreachable(x: bool) -> bool {
     match x {
         true => return false,
@@ -76,6 +79,14 @@ fn test_closure() {
     let _ = || true;
 }
 
+fn test_panic() -> bool {
+    panic!()
+}
+
+fn test_return_macro() -> String {
+    format!("test {}", "test")
+}
+
 fn main() {
     let _ = test_end_of_fn();
     let _ = test_if_block();
@@ -86,4 +97,5 @@ fn main() {
     let _ = test_loop_with_nests();
     let _ = test_loop_with_if_let();
     test_closure();
+    let _ = test_return_macro();
 }

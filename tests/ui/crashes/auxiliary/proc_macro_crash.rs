@@ -1,3 +1,4 @@
+// compile-flags: --emit=link
 // no-prefer-dynamic
 // ^ compiletest by default builds all aux files as dylibs, but we don't want that for proc-macro
 // crates. If we don't set this, compiletest will override the `crate_type` attribute below and
@@ -5,6 +6,7 @@
 // contain a proc-macro.
 
 #![feature(repr128)]
+#![allow(incomplete_features)]
 #![crate_type = "proc-macro"]
 
 extern crate proc_macro;
@@ -30,7 +32,7 @@ pub fn macro_test(input_stream: TokenStream) -> TokenStream {
                 TokenTree::Ident(Ident::new("true", Span::call_site())),
                 TokenTree::Group(clause.clone()),
                 TokenTree::Ident(Ident::new("else", Span::call_site())),
-                TokenTree::Group(clause.clone()),
+                TokenTree::Group(clause),
             ])
         })),
     ])

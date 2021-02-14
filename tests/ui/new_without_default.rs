@@ -1,5 +1,5 @@
 #![feature(const_fn)]
-#![allow(dead_code)]
+#![allow(dead_code, clippy::missing_safety_doc)]
 #![warn(clippy::new_without_default)]
 
 pub struct Foo;
@@ -122,9 +122,9 @@ impl IgnoreUnsafeNew {
 }
 
 #[derive(Default)]
-pub struct OptionRefWrapper<'a, T: 'a>(Option<&'a T>);
+pub struct OptionRefWrapper<'a, T>(Option<&'a T>);
 
-impl<'a, T: 'a> OptionRefWrapper<'a, T> {
+impl<'a, T> OptionRefWrapper<'a, T> {
     pub fn new() -> Self {
         OptionRefWrapper(None)
     }
@@ -145,6 +145,17 @@ impl AllowDerive {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         unimplemented!()
+    }
+}
+
+pub struct NewNotEqualToDerive {
+    foo: i32,
+}
+
+impl NewNotEqualToDerive {
+    // This `new` implementation is not equal to a derived `Default`, so do not suggest deriving.
+    pub fn new() -> Self {
+        NewNotEqualToDerive { foo: 1 }
     }
 }
 

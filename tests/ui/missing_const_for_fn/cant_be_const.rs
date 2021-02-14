@@ -3,7 +3,8 @@
 //! The .stderr output of this test should be empty. Otherwise it's a bug somewhere.
 
 #![warn(clippy::missing_const_for_fn)]
-#![feature(start)]
+#![allow(incomplete_features)]
+#![feature(start, const_generics)]
 
 struct Game;
 
@@ -67,4 +68,36 @@ impl std::ops::Add for Point {
     fn add(self, other: Self) -> Self {
         Point(self.0 + other.0, self.1 + other.1)
     }
+}
+
+mod with_drop {
+    pub struct A;
+    pub struct B;
+    impl Drop for A {
+        fn drop(&mut self) {}
+    }
+
+    impl A {
+        // This can not be const because the type implements `Drop`.
+        pub fn a(self) -> B {
+            B
+        }
+    }
+
+    impl B {
+        // This can not be const because `a` implements `Drop`.
+        pub fn a(self, a: A) -> B {
+            B
+        }
+    }
+}
+
+fn const_generic_params<T, const N: usize>(t: &[T; N]) -> &[T; N] {
+    t
+}
+
+fn const_generic_return<T, const N: usize>(t: &[T]) -> &[T; N] {
+    let p = t.as_ptr() as *const [T; N];
+
+    unsafe { &*p }
 }

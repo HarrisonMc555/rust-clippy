@@ -1,7 +1,7 @@
-use crate::utils::{is_copy, match_path, paths, span_note_and_lint};
-use rustc::hir::{Item, ItemKind};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::{is_copy, match_path, paths, span_lint_and_note};
+use rustc_hir::{Impl, Item, ItemKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for types that implement `Copy` as well as
@@ -13,7 +13,7 @@ declare_clippy_lint! {
     /// **Known problems:** None.
     ///
     /// **Example:**
-    /// ```rust
+    /// ```rust,ignore
     /// #[derive(Copy, Clone)]
     /// struct Countdown(u8);
     ///
@@ -31,18 +31,22 @@ declare_clippy_lint! {
 
 declare_lint_pass!(CopyIterator => [COPY_ITERATOR]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for CopyIterator {
-    fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx Item) {
-        if let ItemKind::Impl(_, _, _, _, Some(ref trait_ref), _, _) = item.node {
-            let ty = cx.tcx.type_of(cx.tcx.hir().local_def_id_from_hir_id(item.hir_id));
+impl<'tcx> LateLintPass<'tcx> for CopyIterator {
+    fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'_>) {
+        if let ItemKind::Impl(Impl {
+            of_trait: Some(ref trait_ref),
+            ..
+        }) = item.kind
+        {
+            let ty = cx.tcx.type_of(cx.tcx.hir().local_def_id(item.hir_id));
 
             if is_copy(cx, ty) && match_path(&trait_ref.path, &paths::ITERATOR) {
-                span_note_and_lint(
+                span_lint_and_note(
                     cx,
                     COPY_ITERATOR,
                     item.span,
                     "you are implementing `Iterator` on a `Copy` type",
-                    item.span,
+                    None,
                     "consider implementing `IntoIterator` instead",
                 );
             }

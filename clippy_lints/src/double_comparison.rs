@@ -1,15 +1,15 @@
 //! Lint on unnecessary double comparisons. Some examples:
 
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
-use syntax::source_map::Span;
+use rustc_hir::{BinOpKind, Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Span;
 
-use crate::utils::{snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
+use crate::utils::{eq_expr_value, snippet_with_applicability, span_lint_and_sugg};
 
 declare_clippy_lint! {
-    /// **What it does:** Checks for double comparions that could be simplified to a single expression.
+    /// **What it does:** Checks for double comparisons that could be simplified to a single expression.
     ///
     ///
     /// **Why is this bad?** Readability.
@@ -18,13 +18,17 @@ declare_clippy_lint! {
     ///
     /// **Example:**
     /// ```rust
-    /// x == y || x < y
+    /// # let x = 1;
+    /// # let y = 2;
+    /// if x == y || x < y {}
     /// ```
     ///
     /// Could be written as:
     ///
     /// ```rust
-    /// x <= y
+    /// # let x = 1;
+    /// # let y = 2;
+    /// if x <= y {}
     /// ```
     pub DOUBLE_COMPARISONS,
     complexity,
@@ -33,17 +37,16 @@ declare_clippy_lint! {
 
 declare_lint_pass!(DoubleComparisons => [DOUBLE_COMPARISONS]);
 
-impl<'a, 'tcx> DoubleComparisons {
+impl<'tcx> DoubleComparisons {
     #[allow(clippy::similar_names)]
-    fn check_binop(self, cx: &LateContext<'a, 'tcx>, op: BinOpKind, lhs: &'tcx Expr, rhs: &'tcx Expr, span: Span) {
-        let (lkind, llhs, lrhs, rkind, rlhs, rrhs) = match (lhs.node.clone(), rhs.node.clone()) {
+    fn check_binop(cx: &LateContext<'tcx>, op: BinOpKind, lhs: &'tcx Expr<'_>, rhs: &'tcx Expr<'_>, span: Span) {
+        let (lkind, llhs, lrhs, rkind, rlhs, rrhs) = match (&lhs.kind, &rhs.kind) {
             (ExprKind::Binary(lb, llhs, lrhs), ExprKind::Binary(rb, rlhs, rrhs)) => {
                 (lb.node, llhs, lrhs, rb.node, rlhs, rrhs)
             },
             _ => return,
         };
-        let mut spanless_eq = SpanlessEq::new(cx).ignore_fn();
-        if !(spanless_eq.eq_expr(&llhs, &rlhs) && spanless_eq.eq_expr(&lrhs, &rrhs)) {
+        if !(eq_expr_value(cx, &llhs, &rlhs) && eq_expr_value(cx, &lrhs, &rrhs)) {
             return;
         }
         macro_rules! lint_double_comparison {
@@ -56,13 +59,14 @@ impl<'a, 'tcx> DoubleComparisons {
                     cx,
                     DOUBLE_COMPARISONS,
                     span,
-                    "This binary expression can be simplified",
+                    "this binary expression can be simplified",
                     "try",
                     sugg,
                     applicability,
                 );
             }};
         }
+        #[rustfmt::skip]
         match (op, lkind, rkind) {
             (BinOpKind::Or, BinOpKind::Eq, BinOpKind::Lt) | (BinOpKind::Or, BinOpKind::Lt, BinOpKind::Eq) => {
                 lint_double_comparison!(<=)
@@ -81,10 +85,10 @@ impl<'a, 'tcx> DoubleComparisons {
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DoubleComparisons {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
-        if let ExprKind::Binary(ref kind, ref lhs, ref rhs) = expr.node {
-            self.check_binop(cx, kind.node, lhs, rhs, expr.span);
+impl<'tcx> LateLintPass<'tcx> for DoubleComparisons {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
+        if let ExprKind::Binary(ref kind, ref lhs, ref rhs) = expr.kind {
+            Self::check_binop(cx, kind.node, lhs, rhs, expr.span);
         }
     }
 }

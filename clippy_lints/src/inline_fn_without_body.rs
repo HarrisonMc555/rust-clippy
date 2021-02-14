@@ -2,11 +2,12 @@
 
 use crate::utils::span_lint_and_then;
 use crate::utils::sugg::DiagnosticBuilderExt;
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use rustc_ast::ast::Attribute;
 use rustc_errors::Applicability;
-use syntax::ast::{Attribute, Name};
+use rustc_hir::{TraitFn, TraitItem, TraitItemKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::{sym, Symbol};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for `#[inline]` on trait methods without bodies
@@ -30,17 +31,17 @@ declare_clippy_lint! {
 
 declare_lint_pass!(InlineFnWithoutBody => [INLINE_FN_WITHOUT_BODY]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InlineFnWithoutBody {
-    fn check_trait_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx TraitItem) {
-        if let TraitItemKind::Method(_, TraitMethod::Required(_)) = item.node {
+impl<'tcx> LateLintPass<'tcx> for InlineFnWithoutBody {
+    fn check_trait_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx TraitItem<'_>) {
+        if let TraitItemKind::Fn(_, TraitFn::Required(_)) = item.kind {
             check_attrs(cx, item.ident.name, &item.attrs);
         }
     }
 }
 
-fn check_attrs(cx: &LateContext<'_, '_>, name: Name, attrs: &[Attribute]) {
+fn check_attrs(cx: &LateContext<'_>, name: Symbol, attrs: &[Attribute]) {
     for attr in attrs {
-        if !attr.check_name(sym!(inline)) {
+        if !attr.has_name(sym::inline) {
             continue;
         }
 
@@ -49,8 +50,8 @@ fn check_attrs(cx: &LateContext<'_, '_>, name: Name, attrs: &[Attribute]) {
             INLINE_FN_WITHOUT_BODY,
             attr.span,
             &format!("use of `#[inline]` on trait method `{}` which has no body", name),
-            |db| {
-                db.suggest_remove_item(cx, attr.span, "remove", Applicability::MachineApplicable);
+            |diag| {
+                diag.suggest_remove_item(cx, attr.span, "remove", Applicability::MachineApplicable);
             },
         );
     }

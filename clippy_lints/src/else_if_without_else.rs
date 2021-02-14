@@ -1,10 +1,11 @@
 //! Lint on if expressions with an else if, but without a final else branch.
 
-use rustc::lint::{in_external_macro, EarlyContext, EarlyLintPass, LintArray, LintContext, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use syntax::ast::*;
+use rustc_ast::ast::{Expr, ExprKind};
+use rustc_lint::{EarlyContext, EarlyLintPass, LintContext};
+use rustc_middle::lint::in_external_macro;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
-use crate::utils::span_help_and_lint;
+use crate::utils::span_lint_and_help;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for usage of if expressions with an `else if` branch,
@@ -16,6 +17,9 @@ declare_clippy_lint! {
     ///
     /// **Example:**
     /// ```rust
+    /// # fn a() {}
+    /// # fn b() {}
+    /// # let x: i32 = 1;
     /// if x.is_positive() {
     ///     a();
     /// } else if x.is_negative() {
@@ -26,6 +30,9 @@ declare_clippy_lint! {
     /// Could be written:
     ///
     /// ```rust
+    /// # fn a() {}
+    /// # fn b() {}
+    /// # let x: i32 = 1;
     /// if x.is_positive() {
     ///     a();
     /// } else if x.is_negative() {
@@ -36,7 +43,7 @@ declare_clippy_lint! {
     /// ```
     pub ELSE_IF_WITHOUT_ELSE,
     restriction,
-    "if expression with an `else if`, but without a final `else` branch"
+    "`if` expression with an `else if`, but without a final `else` branch"
 }
 
 declare_lint_pass!(ElseIfWithoutElse => [ELSE_IF_WITHOUT_ELSE]);
@@ -47,13 +54,14 @@ impl EarlyLintPass for ElseIfWithoutElse {
             return;
         }
 
-        while let ExprKind::If(_, _, Some(ref els)) = item.node {
-            if let ExprKind::If(_, _, None) = els.node {
-                span_help_and_lint(
+        while let ExprKind::If(_, _, Some(ref els)) = item.kind {
+            if let ExprKind::If(_, _, None) = els.kind {
+                span_lint_and_help(
                     cx,
                     ELSE_IF_WITHOUT_ELSE,
                     els.span,
-                    "if expression with an `else if`, but without a final `else`",
+                    "`if` expression with an `else if`, but without a final `else`",
+                    None,
                     "add an `else` block here",
                 );
             }

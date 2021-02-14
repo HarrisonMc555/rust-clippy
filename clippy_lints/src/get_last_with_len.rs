@@ -1,14 +1,14 @@
 //! lint on using `x.get(x.len() - 1)` instead of `x.last()`
 
-use crate::utils::{match_type, paths, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
+use crate::utils::{is_type_diagnostic_item, snippet_with_applicability, span_lint_and_sugg, SpanlessEq};
 use if_chain::if_chain;
-use rustc::hir::{BinOpKind, Expr, ExprKind};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use syntax::ast::LitKind;
-use syntax::source_map::Spanned;
-use syntax::symbol::Symbol;
+use rustc_hir::{BinOpKind, Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Spanned;
+use rustc_span::sym;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for using `x.get(x.len() - 1)` instead of
@@ -44,19 +44,19 @@ declare_clippy_lint! {
 
 declare_lint_pass!(GetLastWithLen => [GET_LAST_WITH_LEN]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for GetLastWithLen {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
+impl<'tcx> LateLintPass<'tcx> for GetLastWithLen {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
         if_chain! {
             // Is a method call
-            if let ExprKind::MethodCall(ref path, _, ref args) = expr.node;
+            if let ExprKind::MethodCall(ref path, _, ref args, _) = expr.kind;
 
             // Method name is "get"
-            if path.ident.name == Symbol::intern("get");
+            if path.ident.name == sym!(get);
 
             // Argument 0 (the struct we're calling the method on) is a vector
             if let Some(struct_calling_on) = args.get(0);
-            let struct_ty = cx.tables.expr_ty(struct_calling_on);
-            if match_type(cx, struct_ty, &paths::VEC);
+            let struct_ty = cx.typeck_results().expr_ty(struct_calling_on);
+            if is_type_diagnostic_item(cx, struct_ty, sym::vec_type);
 
             // Argument to "get" is a subtraction
             if let Some(get_index_arg) = args.get(1);
@@ -67,20 +67,19 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for GetLastWithLen {
                 },
                 lhs,
                 rhs,
-            ) = &get_index_arg.node;
+            ) = &get_index_arg.kind;
 
             // LHS of subtraction is "x.len()"
-            if let ExprKind::MethodCall(arg_lhs_path, _, lhs_args) = &lhs.node;
-            if arg_lhs_path.ident.name == Symbol::intern("len");
+            if let ExprKind::MethodCall(arg_lhs_path, _, lhs_args, _) = &lhs.kind;
+            if arg_lhs_path.ident.name == sym!(len);
             if let Some(arg_lhs_struct) = lhs_args.get(0);
 
             // The two vectors referenced (x in x.get(...) and in x.len())
             if SpanlessEq::new(cx).eq_expr(struct_calling_on, arg_lhs_struct);
 
             // RHS of subtraction is 1
-            if let ExprKind::Lit(rhs_lit) = &rhs.node;
-            if let LitKind::Int(rhs_value, ..) = rhs_lit.node;
-            if rhs_value == 1;
+            if let ExprKind::Lit(rhs_lit) = &rhs.kind;
+            if let LitKind::Int(1, ..) = rhs_lit.node;
 
             then {
                 let mut applicability = Applicability::MachineApplicable;

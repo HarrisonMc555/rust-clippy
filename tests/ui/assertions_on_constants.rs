@@ -1,3 +1,5 @@
+#![allow(non_fmt_panic)]
+
 macro_rules! assert_const {
     ($len:expr) => {
         assert!($len > 0);
@@ -11,11 +13,15 @@ fn main() {
     assert!(true, "true message");
     assert!(false, "false message");
 
+    let msg = "panic message";
+    assert!(false, msg.to_uppercase());
+
     const B: bool = true;
     assert!(B);
 
     const C: bool = false;
     assert!(C);
+    assert!(C, "C message");
 
     debug_assert!(true);
     // Don't lint this, since there is no better way for expressing "Only panic in debug mode".

@@ -1,10 +1,11 @@
 use crate::consts::{constant_context, Constant};
 use crate::utils::{match_qpath, paths, span_lint};
 use if_chain::if_chain;
-use rustc::hir::{Expr, ExprKind};
-use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use syntax::ast::LitKind;
+use rustc_ast::LitKind;
+use rustc_hir::{Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass, LintContext};
+use rustc_middle::lint::in_external_macro;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for transmute calls which would receive a null pointer.
@@ -28,65 +29,51 @@ declare_lint_pass!(TransmutingNull => [TRANSMUTING_NULL]);
 
 const LINT_MSG: &str = "transmuting a known null pointer into a reference.";
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TransmutingNull {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
+impl<'tcx> LateLintPass<'tcx> for TransmutingNull {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
         if in_external_macro(cx.sess(), expr.span) {
             return;
         }
 
         if_chain! {
-            if let ExprKind::Call(ref func, ref args) = expr.node;
-            if let ExprKind::Path(ref path) = func.node;
+            if let ExprKind::Call(ref func, ref args) = expr.kind;
+            if let ExprKind::Path(ref path) = func.kind;
             if match_qpath(path, &paths::STD_MEM_TRANSMUTE);
             if args.len() == 1;
 
             then {
 
                 // Catching transmute over constants that resolve to `null`.
-                let mut const_eval_context = constant_context(cx, cx.tables);
+                let mut const_eval_context = constant_context(cx, cx.typeck_results());
                 if_chain! {
-                    if let ExprKind::Path(ref _qpath) = args[0].node;
+                    if let ExprKind::Path(ref _qpath) = args[0].kind;
                     let x = const_eval_context.expr(&args[0]);
-                    if let Some(constant) = x;
-                    if let Constant::RawPtr(ptr_value) = constant;
-                    if ptr_value == 0;
+                    if let Some(Constant::RawPtr(0)) = x;
                     then {
-                        span_lint(
-                            cx,
-                            TRANSMUTING_NULL,
-                            expr.span,
-                            LINT_MSG)
+                        span_lint(cx, TRANSMUTING_NULL, expr.span, LINT_MSG)
                     }
                 }
 
                 // Catching:
                 // `std::mem::transmute(0 as *const i32)`
                 if_chain! {
-                    if let ExprKind::Cast(ref inner_expr, ref _cast_ty) = args[0].node;
-                    if let ExprKind::Lit(ref lit) = inner_expr.node;
+                    if let ExprKind::Cast(ref inner_expr, ref _cast_ty) = args[0].kind;
+                    if let ExprKind::Lit(ref lit) = inner_expr.kind;
                     if let LitKind::Int(0, _) = lit.node;
                     then {
-                        span_lint(
-                            cx,
-                            TRANSMUTING_NULL,
-                            expr.span,
-                            LINT_MSG)
+                        span_lint(cx, TRANSMUTING_NULL, expr.span, LINT_MSG)
                     }
                 }
 
                 // Catching:
                 // `std::mem::transmute(std::ptr::null::<i32>())`
                 if_chain! {
-                    if let ExprKind::Call(ref func1, ref args1) = args[0].node;
-                    if let ExprKind::Path(ref path1) = func1.node;
+                    if let ExprKind::Call(ref func1, ref args1) = args[0].kind;
+                    if let ExprKind::Path(ref path1) = func1.kind;
                     if match_qpath(path1, &paths::STD_PTR_NULL);
-                    if args1.len() == 0;
+                    if args1.is_empty();
                     then {
-                        span_lint(
-                            cx,
-                            TRANSMUTING_NULL,
-                            expr.span,
-                            LINT_MSG)
+                        span_lint(cx, TRANSMUTING_NULL, expr.span, LINT_MSG)
                     }
                 }
 

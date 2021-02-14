@@ -1,7 +1,11 @@
+// run-rustfix
+
+#![allow(unused, clippy::suspicious_map)]
+
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 #[warn(clippy::needless_collect)]
-#[allow(unused_variables, clippy::iter_cloned_collect)]
+#[allow(unused_variables, clippy::iter_cloned_collect, clippy::iter_next_slice)]
 fn main() {
     let sample = [1; 5];
     let len = sample.iter().collect::<Vec<_>>().len();

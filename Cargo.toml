@@ -1,6 +1,6 @@
 [package]
 name = "clippy"
-version = "0.0.212"
+version = "0.1.52"
 authors = [
 	"Manish Goregaokar <manishsmail@gmail.com>",
 	"Andre Bogus <bogusandre@gmail.com>",
@@ -11,21 +11,12 @@ authors = [
 description = "A bunch of helpful lints to avoid common pitfalls in Rust"
 repository = "https://github.com/rust-lang/rust-clippy"
 readme = "README.md"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 keywords = ["clippy", "lint", "plugin"]
 categories = ["development-tools", "development-tools::cargo-plugins"]
 build = "build.rs"
 edition = "2018"
 publish = false
-
-[badges]
-travis-ci = { repository = "rust-lang/rust-clippy" }
-appveyor = { repository = "rust-lang/rust-clippy" }
-
-[lib]
-name = "clippy"
-plugin = true
-test = false
 
 [[bin]]
 name = "cargo-clippy"
@@ -38,16 +29,16 @@ path = "src/driver.rs"
 
 [dependencies]
 # begin automatic update
-clippy_lints = { version = "0.0.212", path = "clippy_lints" }
+clippy_lints = { version = "0.1.50", path = "clippy_lints" }
 # end automatic update
-regex = "1"
-semver = "0.9"
-rustc_tools_util = { version = "0.2.0", path = "rustc_tools_util"}
+semver = "0.11"
+rustc_tools_util = { version = "0.2.0", path = "rustc_tools_util" }
+tempfile = { version = "3.1.0", optional = true }
 
 [dev-dependencies]
-cargo_metadata = "0.7.1"
-compiletest_rs = { version = "0.3.22", features = ["tmp"] }
-lazy_static = "1.0"
+cargo_metadata = "0.12"
+compiletest_rs = { version = "0.5.0", features = ["tmp"] }
+tester = "0.7"
 clippy-mini-macro-test = { version = "0.2", path = "mini-macro" }
 serde = { version = "1.0", features = ["derive"] }
 derive-new = "0.5"
@@ -58,7 +49,9 @@ derive-new = "0.5"
 rustc-workspace-hack = "1.0.0"
 
 [build-dependencies]
-rustc_tools_util = { version = "0.2.0", path = "rustc_tools_util"}
+rustc_tools_util = { version = "0.2.0", path = "rustc_tools_util" }
 
 [features]
-debugging = []
+deny-warnings = []
+integration = ["tempfile"]
+internal-lints = ["clippy_lints/internal-lints"]

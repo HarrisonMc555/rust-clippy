@@ -1,10 +1,11 @@
-use crate::utils::{is_expn_of, match_def_path, paths, resolve_node, span_lint, span_lint_and_sugg};
+use crate::utils::{is_expn_of, match_function_call, paths, span_lint, span_lint_and_sugg};
 use if_chain::if_chain;
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use syntax::ast::LitKind;
+use rustc_hir::{BorrowKind, Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::sym;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for usage of `write!()` / `writeln()!` which can be
@@ -16,8 +17,10 @@ declare_clippy_lint! {
     ///
     /// **Example:**
     /// ```rust
+    /// # use std::io::Write;
+    /// # let bar = "furchtbar";
     /// // this would be clearer as `eprintln!("foo: {:?}", bar);`
-    /// writeln!(&mut io::stderr(), "foo: {:?}", bar).unwrap();
+    /// writeln!(&mut std::io::stderr(), "foo: {:?}", bar).unwrap();
     /// ```
     pub EXPLICIT_WRITE,
     complexity,
@@ -26,25 +29,22 @@ declare_clippy_lint! {
 
 declare_lint_pass!(ExplicitWrite => [EXPLICIT_WRITE]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ExplicitWrite {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
+impl<'tcx> LateLintPass<'tcx> for ExplicitWrite {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
         if_chain! {
             // match call to unwrap
-            if let ExprKind::MethodCall(ref unwrap_fun, _, ref unwrap_args) = expr.node;
-            if unwrap_fun.ident.name == sym!(unwrap);
+            if let ExprKind::MethodCall(ref unwrap_fun, _, ref unwrap_args, _) = expr.kind;
+            if unwrap_fun.ident.name == sym::unwrap;
             // match call to write_fmt
-            if unwrap_args.len() > 0;
-            if let ExprKind::MethodCall(ref write_fun, _, ref write_args) =
-                unwrap_args[0].node;
+            if !unwrap_args.is_empty();
+            if let ExprKind::MethodCall(ref write_fun, _, write_args, _) =
+                unwrap_args[0].kind;
             if write_fun.ident.name == sym!(write_fmt);
             // match calls to std::io::stdout() / std::io::stderr ()
-            if write_args.len() > 0;
-            if let ExprKind::Call(ref dest_fun, _) = write_args[0].node;
-            if let ExprKind::Path(ref qpath) = dest_fun.node;
-            if let Some(dest_fun_id) = resolve_node(cx, qpath, dest_fun.hir_id).opt_def_id();
-            if let Some(dest_name) = if match_def_path(cx, dest_fun_id, &paths::STDOUT) {
+            if !write_args.is_empty();
+            if let Some(dest_name) = if match_function_call(cx, &write_args[0], &paths::STDOUT).is_some() {
                 Some("stdout")
-            } else if match_def_path(cx, dest_fun_id, &paths::STDERR) {
+            } else if match_function_call(cx, &write_args[0], &paths::STDERR).is_some() {
                 Some("stderr")
             } else {
                 None
@@ -130,16 +130,17 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ExplicitWrite {
 }
 
 // Extract the output string from the given `write_args`.
-fn write_output_string(write_args: &HirVec<Expr>) -> Option<String> {
+fn write_output_string(write_args: &[Expr<'_>]) -> Option<String> {
     if_chain! {
         // Obtain the string that should be printed
         if write_args.len() > 1;
-        if let ExprKind::Call(_, ref output_args) = write_args[1].node;
-        if output_args.len() > 0;
-        if let ExprKind::AddrOf(_, ref output_string_expr) = output_args[0].node;
-        if let ExprKind::Array(ref string_exprs) = output_string_expr.node;
-        if string_exprs.len() > 0;
-        if let ExprKind::Lit(ref lit) = string_exprs[0].node;
+        if let ExprKind::Call(_, ref output_args) = write_args[1].kind;
+        if !output_args.is_empty();
+        if let ExprKind::AddrOf(BorrowKind::Ref, _, ref output_string_expr) = output_args[0].kind;
+        if let ExprKind::Array(ref string_exprs) = output_string_expr.kind;
+        // we only want to provide an automatic suggestion for simple (non-format) strings
+        if string_exprs.len() == 1;
+        if let ExprKind::Lit(ref lit) = string_exprs[0].kind;
         if let LitKind::Str(ref write_output, _) = lit.node;
         then {
             return Some(write_output.to_string())

@@ -1,5 +1,6 @@
 #![warn(clippy::missing_const_for_fn)]
-#![allow(clippy::let_and_return)]
+#![allow(incomplete_features, clippy::let_and_return)]
+#![feature(const_generics)]
 
 use std::mem::transmute;
 
@@ -11,6 +12,10 @@ impl Game {
     // Could be const
     pub fn new() -> Self {
         Self { guess: 42 }
+    }
+
+    fn const_generic_params<'a, T, const N: usize>(&self, b: &'a [T; N]) -> &'a [T; N] {
+        b
     }
 }
 
@@ -25,8 +30,7 @@ fn two() -> i32 {
     abc
 }
 
-// FIXME: This is a false positive in the `is_min_const_fn` function.
-// At least until the `const_string_new` feature is stabilzed.
+// Could be const (since Rust 1.39)
 fn string() -> String {
     String::new()
 }
@@ -41,8 +45,6 @@ fn generic<T>(t: T) -> T {
     t
 }
 
-// FIXME: Depends on the `const_transmute` and `const_fn` feature gates.
-// In the future Clippy should be able to suggest this as const, too.
 fn sub(x: u32) -> usize {
     unsafe { transmute(&x) }
 }
@@ -51,6 +53,21 @@ fn sub(x: u32) -> usize {
 // Once implemented, Clippy should be able to suggest this as const, too.
 fn generic_arr<T: Copy>(t: [T; 1]) -> T {
     t[0]
+}
+
+mod with_drop {
+    pub struct A;
+    pub struct B;
+    impl Drop for A {
+        fn drop(&mut self) {}
+    }
+
+    impl B {
+        // This can be const, because `a` is passed by reference
+        pub fn b(self, a: &A) -> B {
+            B
+        }
+    }
 }
 
 // Should not be const

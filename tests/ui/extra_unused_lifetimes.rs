@@ -3,7 +3,7 @@
     dead_code,
     clippy::needless_lifetimes,
     clippy::needless_pass_by_value,
-    clippy::trivially_copy_pass_by_ref
+    clippy::needless_arbitrary_self_type
 )]
 #![warn(clippy::extra_unused_lifetimes)]
 
@@ -25,7 +25,7 @@ fn lt_return_only<'a>() -> &'a u8 {
     panic!()
 }
 
-fn unused_lt_blergh<'a>(x: Option<Box<Send + 'a>>) {}
+fn unused_lt_blergh<'a>(x: Option<Box<dyn Send + 'a>>) {}
 
 trait Foo<'a> {
     fn x(&self, a: &'a u8);
@@ -59,6 +59,17 @@ struct X {
 impl X {
     fn self_ref_with_lifetime<'a>(&'a self) {}
     fn explicit_self_with_lifetime<'a>(self: &'a Self) {}
+}
+
+// Methods implementing traits must have matching lifetimes
+mod issue4291 {
+    trait BadTrait {
+        fn unused_lt<'a>(x: u8) {}
+    }
+
+    impl BadTrait for () {
+        fn unused_lt<'a>(_x: u8) {}
+    }
 }
 
 fn main() {}

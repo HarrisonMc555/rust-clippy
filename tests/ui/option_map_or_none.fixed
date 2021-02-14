@@ -1,5 +1,7 @@
 // run-rustfix
 
+#![allow(clippy::bind_instead_of_map)]
+
 fn main() {
     let opt = Some(1);
 

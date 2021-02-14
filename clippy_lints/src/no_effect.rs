@@ -1,9 +1,9 @@
-use crate::utils::{has_drop, in_macro_or_desugar, snippet_opt, span_lint, span_lint_and_sugg};
-use rustc::hir::def::{DefKind, Res};
-use rustc::hir::{BinOpKind, BlockCheckMode, Expr, ExprKind, Stmt, StmtKind, UnsafeSource};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::{has_drop, snippet_opt, span_lint, span_lint_and_sugg};
 use rustc_errors::Applicability;
+use rustc_hir::def::{DefKind, Res};
+use rustc_hir::{BinOpKind, BlockCheckMode, Expr, ExprKind, Stmt, StmtKind, UnsafeSource};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 use std::ops::Deref;
 
 declare_clippy_lint! {
@@ -34,7 +34,7 @@ declare_clippy_lint! {
     /// **Known problems:** None.
     ///
     /// **Example:**
-    /// ```rust
+    /// ```rust,ignore
     /// compute_array()[0];
     /// ```
     pub UNNECESSARY_OPERATION,
@@ -42,13 +42,13 @@ declare_clippy_lint! {
     "outer expressions with no effect"
 }
 
-fn has_no_effect(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
-    if in_macro_or_desugar(expr.span) {
+fn has_no_effect(cx: &LateContext<'_>, expr: &Expr<'_>) -> bool {
+    if expr.span.from_expansion() {
         return false;
     }
-    match expr.node {
-        ExprKind::Lit(..) | ExprKind::Closure(.., _) => true,
-        ExprKind::Path(..) => !has_drop(cx, cx.tables.expr_ty(expr)),
+    match expr.kind {
+        ExprKind::Lit(..) | ExprKind::Closure(..) => true,
+        ExprKind::Path(..) => !has_drop(cx, cx.typeck_results().expr_ty(expr)),
         ExprKind::Index(ref a, ref b) | ExprKind::Binary(_, ref a, ref b) => {
             has_no_effect(cx, a) && has_no_effect(cx, b)
         },
@@ -58,22 +58,20 @@ fn has_no_effect(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
         | ExprKind::Type(ref inner, _)
         | ExprKind::Unary(_, ref inner)
         | ExprKind::Field(ref inner, _)
-        | ExprKind::AddrOf(_, ref inner)
+        | ExprKind::AddrOf(_, _, ref inner)
         | ExprKind::Box(ref inner) => has_no_effect(cx, inner),
         ExprKind::Struct(_, ref fields, ref base) => {
-            !has_drop(cx, cx.tables.expr_ty(expr))
+            !has_drop(cx, cx.typeck_results().expr_ty(expr))
                 && fields.iter().all(|field| has_no_effect(cx, &field.expr))
-                && match *base {
-                    Some(ref base) => has_no_effect(cx, base),
-                    None => true,
-                }
+                && base.as_ref().map_or(true, |base| has_no_effect(cx, base))
         },
         ExprKind::Call(ref callee, ref args) => {
-            if let ExprKind::Path(ref qpath) = callee.node {
-                let res = cx.tables.qpath_res(qpath, callee.hir_id);
+            if let ExprKind::Path(ref qpath) = callee.kind {
+                let res = cx.qpath_res(qpath, callee.hir_id);
                 match res {
-                    Res::Def(DefKind::Struct, ..) | Res::Def(DefKind::Variant, ..) | Res::Def(DefKind::Ctor(..), _) => {
-                        !has_drop(cx, cx.tables.expr_ty(expr)) && args.iter().all(|arg| has_no_effect(cx, arg))
+                    Res::Def(DefKind::Struct | DefKind::Variant | DefKind::Ctor(..), ..) => {
+                        !has_drop(cx, cx.typeck_results().expr_ty(expr))
+                            && args.iter().all(|arg| has_no_effect(cx, arg))
                     },
                     _ => false,
                 }
@@ -82,12 +80,7 @@ fn has_no_effect(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
             }
         },
         ExprKind::Block(ref block, _) => {
-            block.stmts.is_empty()
-                && if let Some(ref expr) = block.expr {
-                    has_no_effect(cx, expr)
-                } else {
-                    false
-                }
+            block.stmts.is_empty() && block.expr.as_ref().map_or(false, |expr| has_no_effect(cx, expr))
         },
         _ => false,
     }
@@ -95,15 +88,15 @@ fn has_no_effect(cx: &LateContext<'_, '_>, expr: &Expr) -> bool {
 
 declare_lint_pass!(NoEffect => [NO_EFFECT, UNNECESSARY_OPERATION]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NoEffect {
-    fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, stmt: &'tcx Stmt) {
-        if let StmtKind::Semi(ref expr) = stmt.node {
+impl<'tcx> LateLintPass<'tcx> for NoEffect {
+    fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx Stmt<'_>) {
+        if let StmtKind::Semi(ref expr) = stmt.kind {
             if has_no_effect(cx, expr) {
                 span_lint(cx, NO_EFFECT, stmt.span, "statement with no effect");
             } else if let Some(reduced) = reduce_expression(cx, expr) {
                 let mut snippet = String::new();
                 for e in reduced {
-                    if in_macro_or_desugar(e.span) {
+                    if e.span.from_expansion() {
                         return;
                     }
                     if let Some(snip) = snippet_opt(cx, e.span) {
@@ -127,11 +120,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NoEffect {
     }
 }
 
-fn reduce_expression<'a>(cx: &LateContext<'_, '_>, expr: &'a Expr) -> Option<Vec<&'a Expr>> {
-    if in_macro_or_desugar(expr.span) {
+fn reduce_expression<'a>(cx: &LateContext<'_>, expr: &'a Expr<'a>) -> Option<Vec<&'a Expr<'a>>> {
+    if expr.span.from_expansion() {
         return None;
     }
-    match expr.node {
+    match expr.kind {
         ExprKind::Index(ref a, ref b) => Some(vec![&**a, &**b]),
         ExprKind::Binary(ref binop, ref a, ref b) if binop.node != BinOpKind::And && binop.node != BinOpKind::Or => {
             Some(vec![&**a, &**b])
@@ -142,21 +135,21 @@ fn reduce_expression<'a>(cx: &LateContext<'_, '_>, expr: &'a Expr) -> Option<Vec
         | ExprKind::Type(ref inner, _)
         | ExprKind::Unary(_, ref inner)
         | ExprKind::Field(ref inner, _)
-        | ExprKind::AddrOf(_, ref inner)
+        | ExprKind::AddrOf(_, _, ref inner)
         | ExprKind::Box(ref inner) => reduce_expression(cx, inner).or_else(|| Some(vec![inner])),
         ExprKind::Struct(_, ref fields, ref base) => {
-            if has_drop(cx, cx.tables.expr_ty(expr)) {
+            if has_drop(cx, cx.typeck_results().expr_ty(expr)) {
                 None
             } else {
                 Some(fields.iter().map(|f| &f.expr).chain(base).map(Deref::deref).collect())
             }
         },
         ExprKind::Call(ref callee, ref args) => {
-            if let ExprKind::Path(ref qpath) = callee.node {
-                let res = cx.tables.qpath_res(qpath, callee.hir_id);
+            if let ExprKind::Path(ref qpath) = callee.kind {
+                let res = cx.qpath_res(qpath, callee.hir_id);
                 match res {
-                    Res::Def(DefKind::Struct, ..) | Res::Def(DefKind::Variant, ..) | Res::Def(DefKind::Ctor(..), _)
-                        if !has_drop(cx, cx.tables.expr_ty(expr)) =>
+                    Res::Def(DefKind::Struct | DefKind::Variant | DefKind::Ctor(..), ..)
+                        if !has_drop(cx, cx.typeck_results().expr_ty(expr)) =>
                     {
                         Some(args.iter().collect())
                     },

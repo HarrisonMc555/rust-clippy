@@ -1,3 +1,6 @@
+// FIXME: Ideally these suggestions would be fixed via rustfix. Blocked by rust-lang/rust#53934
+// // run-rustfix
+
 #![allow(clippy::print_literal)]
 #![warn(clippy::print_with_newline)]
 
@@ -6,6 +9,7 @@ fn main() {
     print!("Hello {}\n", "world");
     print!("Hello {} {}\n", "world", "#2");
     print!("{}\n", 1265);
+    print!("\n");
 
     // these are all fine
     print!("");
@@ -39,4 +43,10 @@ fn main() {
         r"
 "
     );
+
+    // Don't warn on CRLF (#4208)
+    print!("\r\n");
+    print!("foo\r\n");
+    print!("\\r\n"); //~ ERROR
+    print!("foo\rbar\n") // ~ ERROR
 }

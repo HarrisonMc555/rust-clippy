@@ -4,6 +4,7 @@
 
 struct SizedStruct(i32);
 struct UnsizedStruct([i32]);
+struct BigStruct([i32; 10000]);
 
 /// The following should trigger the lint
 mod should_trigger {
@@ -19,9 +20,10 @@ mod should_trigger {
 
 /// The following should not trigger the lint
 mod should_not_trigger {
-    use super::UnsizedStruct;
+    use super::{BigStruct, UnsizedStruct};
 
     struct C(Vec<Box<UnsizedStruct>>);
+    struct D(Vec<Box<BigStruct>>);
 
     struct StructWithVecBoxButItsUnsized {
         unsized_type: Vec<Box<UnsizedStruct>>,
@@ -30,6 +32,20 @@ mod should_not_trigger {
     struct TraitVec<T: ?Sized> {
         // Regression test for #3720. This was causing an ICE.
         inner: Vec<Box<T>>,
+    }
+}
+
+mod inner_mod {
+    mod inner {
+        pub struct S;
+    }
+
+    mod inner2 {
+        use super::inner::S;
+
+        pub fn f() -> Vec<S> {
+            vec![]
+        }
     }
 }
 

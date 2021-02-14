@@ -1,11 +1,12 @@
 //! lint on missing cargo common metadata
 
-use crate::utils::span_lint;
-use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use syntax::{ast::*, source_map::DUMMY_SP};
+use std::path::PathBuf;
 
-use cargo_metadata;
+use crate::utils::{run_lints, span_lint};
+use rustc_hir::{hir_id::CRATE_HIR_ID, Crate};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_tool_lint, impl_lint_pass};
+use rustc_span::source_map::DUMMY_SP;
 
 declare_clippy_lint! {
     /// **What it does:** Checks to see if all common metadata is defined in
@@ -25,7 +26,23 @@ declare_clippy_lint! {
     /// description = "A bunch of helpful lints to avoid common pitfalls in Rust"
     /// repository = "https://github.com/rust-lang/rust-clippy"
     /// readme = "README.md"
-    /// license = "MIT/Apache-2.0"
+    /// license = "MIT OR Apache-2.0"
+    /// keywords = ["clippy", "lint", "plugin"]
+    /// categories = ["development-tools", "development-tools::cargo-plugins"]
+    /// ```
+    ///
+    /// Should include an authors field like:
+    ///
+    /// ```toml
+    /// # This `Cargo.toml` includes all common metadata
+    /// [package]
+    /// name = "clippy"
+    /// version = "0.0.212"
+    /// authors = ["Someone <someone@rust-lang.org>"]
+    /// description = "A bunch of helpful lints to avoid common pitfalls in Rust"
+    /// repository = "https://github.com/rust-lang/rust-clippy"
+    /// readme = "README.md"
+    /// license = "MIT OR Apache-2.0"
     /// keywords = ["clippy", "lint", "plugin"]
     /// categories = ["development-tools", "development-tools::cargo-plugins"]
     /// ```
@@ -34,66 +51,78 @@ declare_clippy_lint! {
     "common metadata is defined in `Cargo.toml`"
 }
 
-fn warning(cx: &EarlyContext<'_>, message: &str) {
-    span_lint(cx, CARGO_COMMON_METADATA, DUMMY_SP, message);
+#[derive(Copy, Clone, Debug)]
+pub struct CargoCommonMetadata {
+    ignore_publish: bool,
 }
 
-fn missing_warning(cx: &EarlyContext<'_>, package: &cargo_metadata::Package, field: &str) {
+impl CargoCommonMetadata {
+    pub fn new(ignore_publish: bool) -> Self {
+        Self { ignore_publish }
+    }
+}
+
+impl_lint_pass!(CargoCommonMetadata => [
+    CARGO_COMMON_METADATA
+]);
+
+fn missing_warning(cx: &LateContext<'_>, package: &cargo_metadata::Package, field: &str) {
     let message = format!("package `{}` is missing `{}` metadata", package.name, field);
-    warning(cx, &message);
+    span_lint(cx, CARGO_COMMON_METADATA, DUMMY_SP, &message);
 }
 
 fn is_empty_str(value: &Option<String>) -> bool {
-    match value {
-        None => true,
-        Some(value) if value.is_empty() => true,
-        _ => false,
-    }
+    value.as_ref().map_or(true, String::is_empty)
+}
+
+fn is_empty_path(value: &Option<PathBuf>) -> bool {
+    value.as_ref().and_then(|x| x.to_str()).map_or(true, str::is_empty)
 }
 
 fn is_empty_vec(value: &[String]) -> bool {
     // This works because empty iterators return true
-    value.iter().all(std::string::String::is_empty)
+    value.iter().all(String::is_empty)
 }
 
-declare_lint_pass!(CargoCommonMetadata => [CARGO_COMMON_METADATA]);
-
-impl EarlyLintPass for CargoCommonMetadata {
-    fn check_crate(&mut self, cx: &EarlyContext<'_>, _: &Crate) {
-        let metadata = if let Ok(metadata) = cargo_metadata::MetadataCommand::new().no_deps().exec() {
-            metadata
-        } else {
-            warning(cx, "could not read cargo metadata");
+impl LateLintPass<'_> for CargoCommonMetadata {
+    fn check_crate(&mut self, cx: &LateContext<'_>, _: &Crate<'_>) {
+        if !run_lints(cx, &[CARGO_COMMON_METADATA], CRATE_HIR_ID) {
             return;
-        };
+        }
+
+        let metadata = unwrap_cargo_metadata!(cx, CARGO_COMMON_METADATA, false);
 
         for package in metadata.packages {
-            if is_empty_vec(&package.authors) {
-                missing_warning(cx, &package, "package.authors");
-            }
+            // only run the lint if publish is `None` (`publish = true` or skipped entirely)
+            // or if the vector isn't empty (`publish = ["something"]`)
+            if package.publish.as_ref().filter(|publish| publish.is_empty()).is_none() || self.ignore_publish {
+                if is_empty_vec(&package.authors) {
+                    missing_warning(cx, &package, "package.authors");
+                }
 
-            if is_empty_str(&package.description) {
-                missing_warning(cx, &package, "package.description");
-            }
+                if is_empty_str(&package.description) {
+                    missing_warning(cx, &package, "package.description");
+                }
 
-            if is_empty_str(&package.license) {
-                missing_warning(cx, &package, "package.license");
-            }
+                if is_empty_str(&package.license) && is_empty_path(&package.license_file) {
+                    missing_warning(cx, &package, "either package.license or package.license_file");
+                }
 
-            if is_empty_str(&package.repository) {
-                missing_warning(cx, &package, "package.repository");
-            }
+                if is_empty_str(&package.repository) {
+                    missing_warning(cx, &package, "package.repository");
+                }
 
-            if is_empty_str(&package.readme) {
-                missing_warning(cx, &package, "package.readme");
-            }
+                if is_empty_path(&package.readme) {
+                    missing_warning(cx, &package, "package.readme");
+                }
 
-            if is_empty_vec(&package.keywords) {
-                missing_warning(cx, &package, "package.keywords");
-            }
+                if is_empty_vec(&package.keywords) {
+                    missing_warning(cx, &package, "package.keywords");
+                }
 
-            if is_empty_vec(&package.categories) {
-                missing_warning(cx, &package, "package.categories");
+                if is_empty_vec(&package.categories) {
+                    missing_warning(cx, &package, "package.categories");
+                }
             }
         }
     }

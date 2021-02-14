@@ -166,12 +166,23 @@ pub fn test14() {
     }
 }
 
-// Issue #1991: the outter loop should not warn.
+// Issue #1991: the outer loop should not warn.
 pub fn test15() {
     'label: loop {
         while false {
             break 'label;
         }
+    }
+}
+
+// Issue #4058: `continue` in `break` expression
+pub fn test16() {
+    let mut n = 1;
+    loop {
+        break if n != 5 {
+            n += 1;
+            continue;
+        };
     }
 }
 

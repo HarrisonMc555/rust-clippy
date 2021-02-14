@@ -1,11 +1,10 @@
-use crate::utils::span_lint;
-use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use syntax::{ast::*, source_map::DUMMY_SP};
+use crate::utils::{run_lints, span_lint};
+use rustc_hir::{hir_id::CRATE_HIR_ID, Crate};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::DUMMY_SP;
 
-use cargo_metadata;
 use if_chain::if_chain;
-use semver;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for wildcard dependencies in the `Cargo.toml`.
@@ -29,14 +28,13 @@ declare_clippy_lint! {
 
 declare_lint_pass!(WildcardDependencies => [WILDCARD_DEPENDENCIES]);
 
-impl EarlyLintPass for WildcardDependencies {
-    fn check_crate(&mut self, cx: &EarlyContext<'_>, _: &Crate) {
-        let metadata = if let Ok(metadata) = cargo_metadata::MetadataCommand::new().no_deps().exec() {
-            metadata
-        } else {
-            span_lint(cx, WILDCARD_DEPENDENCIES, DUMMY_SP, "could not read cargo metadata");
+impl LateLintPass<'_> for WildcardDependencies {
+    fn check_crate(&mut self, cx: &LateContext<'_>, _: &Crate<'_>) {
+        if !run_lints(cx, &[WILDCARD_DEPENDENCIES], CRATE_HIR_ID) {
             return;
-        };
+        }
+
+        let metadata = unwrap_cargo_metadata!(cx, WILDCARD_DEPENDENCIES, false);
 
         for dep in &metadata.packages[0].dependencies {
             // VersionReq::any() does not work

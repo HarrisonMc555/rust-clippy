@@ -1,3 +1,7 @@
+// normalize-stderr-test "\(\d+ byte\)" -> "(N byte)"
+// normalize-stderr-test "\(limit: \d+ byte\)" -> "(limit: N byte)"
+
+#![deny(clippy::trivially_copy_pass_by_ref)]
 #![allow(
     clippy::many_single_char_names,
     clippy::blacklisted_name,
@@ -79,6 +83,35 @@ pub trait MyTrait2 {
 impl MyTrait for Foo {
     fn trait_method(&self, _foo: &Foo) {
         unimplemented!()
+    }
+}
+
+#[allow(unused_variables)]
+mod issue3992 {
+    pub trait A {
+        #[allow(clippy::trivially_copy_pass_by_ref)]
+        fn a(b: &u16) {}
+    }
+
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    pub fn c(d: &u16) {}
+}
+
+mod issue5876 {
+    // Don't lint here as it is always inlined
+    #[inline(always)]
+    fn foo_always(x: &i32) {
+        println!("{}", x);
+    }
+
+    #[inline(never)]
+    fn foo_never(x: &i32) {
+        println!("{}", x);
+    }
+
+    #[inline]
+    fn foo(x: &i32) {
+        println!("{}", x);
     }
 }
 

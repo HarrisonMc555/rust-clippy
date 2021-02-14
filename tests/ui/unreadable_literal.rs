@@ -1,5 +1,7 @@
 // run-rustfix
 
+#![warn(clippy::unreadable_literal)]
+
 struct Foo(u64);
 
 macro_rules! foo {
@@ -8,10 +10,16 @@ macro_rules! foo {
     };
 }
 
-#[warn(clippy::unreadable_literal)]
-#[allow(unused_variables)]
+struct Bar(f32);
+
+macro_rules! bar {
+    () => {
+        Bar(100200300400.100200300400500)
+    };
+}
+
 fn main() {
-    let good = (
+    let _good = (
         0b1011_i64,
         0o1_234_u32,
         0x1_234_567,
@@ -22,14 +30,16 @@ fn main() {
         1_234.123_f32,
         1.123_4_f32,
     );
-    let bad = (0b110110_i64, 0x12345678901_usize, 123456_f32, 1.234567_f32);
-    let good_sci = 1.1234e1;
-    let bad_sci = 1.123456e1;
+    let _bad = (0b110110_i64, 0xcafebabe_usize, 123456_f32, 1.234567_f32);
+    let _good_sci = 1.1234e1;
+    let _bad_sci = 1.123456e1;
 
-    let fail9 = 0xabcdef;
-    let fail10: u32 = 0xBAFEBAFE;
-    let fail11 = 0xabcdeff;
-    let fail12: i128 = 0xabcabcabcabcabcabc;
+    let _fail1 = 0xabcdef;
+    let _fail2: u32 = 0xBAFEBAFE;
+    let _fail3 = 0xabcdeff;
+    let _fail4: i128 = 0xabcabcabcabcabcabc;
+    let _fail5 = 1.100300400;
 
     let _ = foo!();
+    let _ = bar!();
 }

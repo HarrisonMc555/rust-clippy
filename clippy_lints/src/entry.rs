@@ -1,12 +1,14 @@
 use crate::utils::SpanlessEq;
-use crate::utils::{get_item_name, higher, match_type, paths, snippet, span_lint_and_then, walk_ptrs_ty};
+use crate::utils::{get_item_name, is_type_diagnostic_item, match_type, paths, snippet, snippet_opt};
+use crate::utils::{snippet_with_applicability, span_lint_and_then};
 use if_chain::if_chain;
-use rustc::hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
 use rustc_errors::Applicability;
-use syntax::source_map::Span;
+use rustc_hir::intravisit::{walk_expr, NestedVisitorMap, Visitor};
+use rustc_hir::{BorrowKind, Expr, ExprKind, UnOp};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::hir::map::Map;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Span;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for uses of `contains_key` + `insert` on `HashMap`
@@ -16,21 +18,32 @@ declare_clippy_lint! {
     ///
     /// **Known problems:** Some false negatives, eg.:
     /// ```rust
-    /// let k = &key;
-    /// if !m.contains_key(k) {
-    ///     m.insert(k.clone(), v);
+    /// # use std::collections::HashMap;
+    /// # let mut map = HashMap::new();
+    /// # let v = 1;
+    /// # let k = 1;
+    /// if !map.contains_key(&k) {
+    ///     map.insert(k.clone(), v);
     /// }
     /// ```
     ///
     /// **Example:**
     /// ```rust
-    /// if !m.contains_key(&k) {
-    ///     m.insert(k, v)
+    /// # use std::collections::HashMap;
+    /// # let mut map = HashMap::new();
+    /// # let k = 1;
+    /// # let v = 1;
+    /// if !map.contains_key(&k) {
+    ///     map.insert(k, v);
     /// }
     /// ```
-    /// can be rewritten as:
+    /// can both be rewritten as:
     /// ```rust
-    /// m.entry(k).or_insert(v);
+    /// # use std::collections::HashMap;
+    /// # let mut map = HashMap::new();
+    /// # let k = 1;
+    /// # let v = 1;
+    /// map.entry(k).or_insert(v);
     /// ```
     pub MAP_ENTRY,
     perf,
@@ -39,20 +52,21 @@ declare_clippy_lint! {
 
 declare_lint_pass!(HashMapPass => [MAP_ENTRY]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for HashMapPass {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
-        if let Some((ref check, ref then_block, ref else_block)) = higher::if_block(&expr) {
-            if let ExprKind::Unary(UnOp::UnNot, ref check) = check.node {
+impl<'tcx> LateLintPass<'tcx> for HashMapPass {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
+        if let ExprKind::If(ref check, ref then_block, ref else_block) = expr.kind {
+            if let ExprKind::Unary(UnOp::Not, ref check) = check.kind {
                 if let Some((ty, map, key)) = check_cond(cx, check) {
                     // in case of `if !m.contains_key(&k) { m.insert(k, v); }`
                     // we can give a better error message
                     let sole_expr = {
                         else_block.is_none()
-                            && if let ExprKind::Block(ref then_block, _) = then_block.node {
+                            && if let ExprKind::Block(ref then_block, _) = then_block.kind {
                                 (then_block.expr.is_some() as usize) + then_block.stmts.len() == 1
                             } else {
                                 true
                             }
+                        // XXXManishearth we can also check for if/else blocks containing `None`.
                     };
 
                     let mut visitor = InsertVisitor {
@@ -84,23 +98,20 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for HashMapPass {
     }
 }
 
-fn check_cond<'a, 'tcx, 'b>(
-    cx: &'a LateContext<'a, 'tcx>,
-    check: &'b Expr,
-) -> Option<(&'static str, &'b Expr, &'b Expr)> {
+fn check_cond<'a>(cx: &LateContext<'_>, check: &'a Expr<'a>) -> Option<(&'static str, &'a Expr<'a>, &'a Expr<'a>)> {
     if_chain! {
-        if let ExprKind::MethodCall(ref path, _, ref params) = check.node;
+        if let ExprKind::MethodCall(ref path, _, ref params, _) = check.kind;
         if params.len() >= 2;
         if path.ident.name == sym!(contains_key);
-        if let ExprKind::AddrOf(_, ref key) = params[1].node;
+        if let ExprKind::AddrOf(BorrowKind::Ref, _, ref key) = params[1].kind;
         then {
             let map = &params[0];
-            let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(map));
+            let obj_ty = cx.typeck_results().expr_ty(map).peel_refs();
 
             return if match_type(cx, obj_ty, &paths::BTREEMAP) {
                 Some(("BTreeMap", map, key))
             }
-            else if match_type(cx, obj_ty, &paths::HASHMAP) {
+            else if is_type_diagnostic_item(cx, obj_ty, sym!(hashmap_type)) {
                 Some(("HashMap", map, key))
             }
             else {
@@ -112,33 +123,37 @@ fn check_cond<'a, 'tcx, 'b>(
     None
 }
 
-struct InsertVisitor<'a, 'tcx: 'a, 'b> {
-    cx: &'a LateContext<'a, 'tcx>,
+struct InsertVisitor<'a, 'tcx, 'b> {
+    cx: &'a LateContext<'tcx>,
     span: Span,
     ty: &'static str,
-    map: &'b Expr,
-    key: &'b Expr,
+    map: &'b Expr<'b>,
+    key: &'b Expr<'b>,
     sole_expr: bool,
 }
 
 impl<'a, 'tcx, 'b> Visitor<'tcx> for InsertVisitor<'a, 'tcx, 'b> {
-    fn visit_expr(&mut self, expr: &'tcx Expr) {
+    type Map = Map<'tcx>;
+
+    fn visit_expr(&mut self, expr: &'tcx Expr<'_>) {
         if_chain! {
-            if let ExprKind::MethodCall(ref path, _, ref params) = expr.node;
+            if let ExprKind::MethodCall(ref path, _, ref params, _) = expr.kind;
             if params.len() == 3;
             if path.ident.name == sym!(insert);
             if get_item_name(self.cx, self.map) == get_item_name(self.cx, &params[0]);
             if SpanlessEq::new(self.cx).eq_expr(self.key, &params[1]);
+            if snippet_opt(self.cx, self.map.span) == snippet_opt(self.cx, params[0].span);
             then {
                 span_lint_and_then(self.cx, MAP_ENTRY, self.span,
-                                   &format!("usage of `contains_key` followed by `insert` on a `{}`", self.ty), |db| {
+                                   &format!("usage of `contains_key` followed by `insert` on a `{}`", self.ty), |diag| {
                     if self.sole_expr {
-                        let help = format!("{}.entry({}).or_insert({})",
-                                           snippet(self.cx, self.map.span, "map"),
-                                           snippet(self.cx, params[1].span, ".."),
-                                           snippet(self.cx, params[2].span, ".."));
+                        let mut app = Applicability::MachineApplicable;
+                        let help = format!("{}.entry({}).or_insert({});",
+                                           snippet_with_applicability(self.cx, self.map.span, "map", &mut app),
+                                           snippet_with_applicability(self.cx, params[1].span, "..", &mut app),
+                                           snippet_with_applicability(self.cx, params[2].span, "..", &mut app));
 
-                        db.span_suggestion(
+                        diag.span_suggestion(
                             self.span,
                             "consider using",
                             help,
@@ -146,15 +161,13 @@ impl<'a, 'tcx, 'b> Visitor<'tcx> for InsertVisitor<'a, 'tcx, 'b> {
                         );
                     }
                     else {
-                        let help = format!("{}.entry({})",
+                        let help = format!("consider using `{}.entry({})`",
                                            snippet(self.cx, self.map.span, "map"),
                                            snippet(self.cx, params[1].span, ".."));
 
-                        db.span_suggestion(
+                        diag.span_label(
                             self.span,
-                            "consider using",
-                            help,
-                            Applicability::MachineApplicable, // snippet
+                            &help,
                         );
                     }
                 });
@@ -165,7 +178,7 @@ impl<'a, 'tcx, 'b> Visitor<'tcx> for InsertVisitor<'a, 'tcx, 'b> {
             walk_expr(self, expr);
         }
     }
-    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
+    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
         NestedVisitorMap::None
     }
 }

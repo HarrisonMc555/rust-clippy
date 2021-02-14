@@ -1,3 +1,5 @@
+#![deny(clippy::match_bool)]
+
 fn match_bool() {
     let test: bool = true;
 
@@ -44,8 +46,8 @@ fn match_bool() {
 
     // Not linted
     match option {
-        1...10 => 1,
-        11...20 => 2,
+        1..=10 => 1,
+        11..=20 => 2,
         _ => 3,
     };
 }

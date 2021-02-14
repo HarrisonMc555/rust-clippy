@@ -1,5 +1,5 @@
 #[warn(clippy::approx_constant)]
-#[allow(unused, clippy::shadow_unrelated, clippy::similar_names, clippy::unreadable_literal)]
+#[allow(unused, clippy::shadow_unrelated, clippy::similar_names)]
 fn main() {
     let my_e = 2.7182;
     let almost_e = 2.718;
@@ -44,6 +44,12 @@ fn main() {
 
     let my_log2_e = 1.4426950408889634;
     let no_log2_e = 1.442;
+
+    let log2_10 = 3.321928094887362;
+    let no_log2_10 = 3.321;
+
+    let log10_2 = 0.301029995663981;
+    let no_log10_2 = 0.301;
 
     let my_pi = 3.1415;
     let almost_pi = 3.14;

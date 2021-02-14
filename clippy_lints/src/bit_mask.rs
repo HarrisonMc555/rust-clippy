@@ -2,12 +2,12 @@ use crate::consts::{constant, Constant};
 use crate::utils::sugg::Sugg;
 use crate::utils::{span_lint, span_lint_and_then};
 use if_chain::if_chain;
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, impl_lint_pass};
+use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use syntax::ast::LitKind;
-use syntax::source_map::Span;
+use rustc_hir::{BinOpKind, Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_tool_lint, impl_lint_pass};
+use rustc_span::source_map::Span;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for incompatible bit masks in comparisons.
@@ -87,10 +87,10 @@ declare_clippy_lint! {
     /// **Example:**
     /// ```rust
     /// # let x = 1;
-    /// if x & 0x1111 == 0 { }
+    /// if x & 0b1111 == 0 { }
     /// ```
     pub VERBOSE_BIT_MASK,
-    style,
+    pedantic,
     "expressions where a bit mask is less readable than the corresponding method call"
 }
 
@@ -100,6 +100,7 @@ pub struct BitMask {
 }
 
 impl BitMask {
+    #[must_use]
     pub fn new(verbose_bit_mask_threshold: u64) -> Self {
         Self {
             verbose_bit_mask_threshold,
@@ -109,9 +110,9 @@ impl BitMask {
 
 impl_lint_pass!(BitMask => [BAD_BIT_MASK, INEFFECTIVE_BIT_MASK, VERBOSE_BIT_MASK]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BitMask {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {
-        if let ExprKind::Binary(cmp, left, right) = &e.node {
+impl<'tcx> LateLintPass<'tcx> for BitMask {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, e: &'tcx Expr<'_>) {
+        if let ExprKind::Binary(cmp, left, right) = &e.kind {
             if cmp.node.is_comparison() {
                 if let Some(cmp_opt) = fetch_int_literal(cx, right) {
                     check_compare(cx, left, cmp.node, cmp_opt, e.span)
@@ -121,13 +122,13 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BitMask {
             }
         }
         if_chain! {
-            if let ExprKind::Binary(op, left, right) = &e.node;
+            if let ExprKind::Binary(op, left, right) = &e.kind;
             if BinOpKind::Eq == op.node;
-            if let ExprKind::Binary(op1, left1, right1) = &left.node;
+            if let ExprKind::Binary(op1, left1, right1) = &left.kind;
             if BinOpKind::BitAnd == op1.node;
-            if let ExprKind::Lit(lit) = &right1.node;
+            if let ExprKind::Lit(lit) = &right1.kind;
             if let LitKind::Int(n, _) = lit.node;
-            if let ExprKind::Lit(lit1) = &right.node;
+            if let ExprKind::Lit(lit1) = &right.kind;
             if let LitKind::Int(0, _) = lit1.node;
             if n.leading_zeros() == n.count_zeros();
             if n > u128::from(self.verbose_bit_mask_threshold);
@@ -136,9 +137,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BitMask {
                                    VERBOSE_BIT_MASK,
                                    e.span,
                                    "bit mask could be simplified with a call to `trailing_zeros`",
-                                   |db| {
+                                   |diag| {
                     let sugg = Sugg::hir(cx, left1, "...").maybe_par();
-                    db.span_suggestion(
+                    diag.span_suggestion(
                         e.span,
                         "try",
                         format!("{}.trailing_zeros() >= {}", sugg, n.count_ones()),
@@ -150,6 +151,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BitMask {
     }
 }
 
+#[must_use]
 fn invert_cmp(cmp: BinOpKind) -> BinOpKind {
     match cmp {
         BinOpKind::Eq => BinOpKind::Eq,
@@ -162,8 +164,8 @@ fn invert_cmp(cmp: BinOpKind) -> BinOpKind {
     }
 }
 
-fn check_compare(cx: &LateContext<'_, '_>, bit_op: &Expr, cmp_op: BinOpKind, cmp_value: u128, span: Span) {
-    if let ExprKind::Binary(op, left, right) = &bit_op.node {
+fn check_compare(cx: &LateContext<'_>, bit_op: &Expr<'_>, cmp_op: BinOpKind, cmp_value: u128, span: Span) {
+    if let ExprKind::Binary(op, left, right) = &bit_op.kind {
         if op.node != BinOpKind::BitAnd && op.node != BinOpKind::BitOr {
             return;
         }
@@ -175,7 +177,7 @@ fn check_compare(cx: &LateContext<'_, '_>, bit_op: &Expr, cmp_op: BinOpKind, cmp
 
 #[allow(clippy::too_many_lines)]
 fn check_bit_mask(
-    cx: &LateContext<'_, '_>,
+    cx: &LateContext<'_>,
     bit_op: BinOpKind,
     cmp_op: BinOpKind,
     mask_value: u128,
@@ -288,7 +290,7 @@ fn check_bit_mask(
     }
 }
 
-fn check_ineffective_lt(cx: &LateContext<'_, '_>, span: Span, m: u128, c: u128, op: &str) {
+fn check_ineffective_lt(cx: &LateContext<'_>, span: Span, m: u128, c: u128, op: &str) {
     if c.is_power_of_two() && m < c {
         span_lint(
             cx,
@@ -302,7 +304,7 @@ fn check_ineffective_lt(cx: &LateContext<'_, '_>, span: Span, m: u128, c: u128, 
     }
 }
 
-fn check_ineffective_gt(cx: &LateContext<'_, '_>, span: Span, m: u128, c: u128, op: &str) {
+fn check_ineffective_gt(cx: &LateContext<'_>, span: Span, m: u128, c: u128, op: &str) {
     if (c + 1).is_power_of_two() && m <= c {
         span_lint(
             cx,
@@ -316,8 +318,8 @@ fn check_ineffective_gt(cx: &LateContext<'_, '_>, span: Span, m: u128, c: u128, 
     }
 }
 
-fn fetch_int_literal(cx: &LateContext<'_, '_>, lit: &Expr) -> Option<u128> {
-    match constant(cx, cx.tables, lit)?.0 {
+fn fetch_int_literal(cx: &LateContext<'_>, lit: &Expr<'_>) -> Option<u128> {
+    match constant(cx, cx.typeck_results(), lit)?.0 {
         Constant::Int(n) => Some(n),
         _ => None,
     }

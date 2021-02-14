@@ -1,10 +1,10 @@
 //! lint when items are used after statements
 
-use crate::utils::{in_macro_or_desugar, span_lint};
-use matches::matches;
-use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use syntax::ast::*;
+use crate::utils::span_lint;
+use rustc_ast::ast::{Block, ItemKind, StmtKind};
+use rustc_lint::{EarlyContext, EarlyLintPass, LintContext};
+use rustc_middle::lint::in_external_macro;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for items declared after some statement in a block.
@@ -17,6 +17,7 @@ declare_clippy_lint! {
     ///
     /// **Example:**
     /// ```rust
+    /// // Bad
     /// fn foo() {
     ///     println!("cake");
     /// }
@@ -29,6 +30,21 @@ declare_clippy_lint! {
     ///     foo(); // prints "foo"
     /// }
     /// ```
+    ///
+    /// ```rust
+    /// // Good
+    /// fn foo() {
+    ///     println!("cake");
+    /// }
+    ///
+    /// fn main() {
+    ///     fn foo() {
+    ///         println!("foo");
+    ///     }
+    ///     foo(); // prints "foo"
+    ///     foo(); // prints "foo"
+    /// }
+    /// ```
     pub ITEMS_AFTER_STATEMENTS,
     pedantic,
     "blocks where an item comes after a statement"
@@ -38,24 +54,24 @@ declare_lint_pass!(ItemsAfterStatements => [ITEMS_AFTER_STATEMENTS]);
 
 impl EarlyLintPass for ItemsAfterStatements {
     fn check_block(&mut self, cx: &EarlyContext<'_>, item: &Block) {
-        if in_macro_or_desugar(item.span) {
+        if in_external_macro(cx.sess(), item.span) {
             return;
         }
 
-        // skip initial items
+        // skip initial items and trailing semicolons
         let stmts = item
             .stmts
             .iter()
-            .map(|stmt| &stmt.node)
-            .skip_while(|s| matches!(**s, StmtKind::Item(..)));
+            .map(|stmt| &stmt.kind)
+            .skip_while(|s| matches!(**s, StmtKind::Item(..) | StmtKind::Empty));
 
         // lint on all further items
         for stmt in stmts {
             if let StmtKind::Item(ref it) = *stmt {
-                if in_macro_or_desugar(it.span) {
+                if in_external_macro(cx.sess(), it.span) {
                     return;
                 }
-                if let ItemKind::MacroDef(..) = it.node {
+                if let ItemKind::MacroDef(..) = it.kind {
                     // do not lint `macro_rules`, but continue processing further statements
                     continue;
                 }

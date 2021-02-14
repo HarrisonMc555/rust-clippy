@@ -1,9 +1,9 @@
-use crate::utils::{is_copy, match_def_path, paths, span_note_and_lint};
+use crate::utils::{is_copy, match_def_path, paths, span_lint_and_note};
 use if_chain::if_chain;
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::ty;
-use rustc::{declare_lint_pass, declare_tool_lint};
+use rustc_hir::{Expr, ExprKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_middle::ty;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
 declare_clippy_lint! {
     /// **What it does:** Checks for calls to `std::mem::drop` with a reference
@@ -101,27 +101,27 @@ const DROP_REF_SUMMARY: &str = "calls to `std::mem::drop` with a reference inste
                                 Dropping a reference does nothing.";
 const FORGET_REF_SUMMARY: &str = "calls to `std::mem::forget` with a reference instead of an owned value. \
                                   Forgetting a reference does nothing.";
-const DROP_COPY_SUMMARY: &str = "calls to `std::mem::drop` with a value that implements Copy. \
+const DROP_COPY_SUMMARY: &str = "calls to `std::mem::drop` with a value that implements `Copy`. \
                                  Dropping a copy leaves the original intact.";
-const FORGET_COPY_SUMMARY: &str = "calls to `std::mem::forget` with a value that implements Copy. \
+const FORGET_COPY_SUMMARY: &str = "calls to `std::mem::forget` with a value that implements `Copy`. \
                                    Forgetting a copy leaves the original intact.";
 
 declare_lint_pass!(DropForgetRef => [DROP_REF, FORGET_REF, DROP_COPY, FORGET_COPY]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DropForgetRef {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
+impl<'tcx> LateLintPass<'tcx> for DropForgetRef {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx Expr<'_>) {
         if_chain! {
-            if let ExprKind::Call(ref path, ref args) = expr.node;
-            if let ExprKind::Path(ref qpath) = path.node;
+            if let ExprKind::Call(ref path, ref args) = expr.kind;
+            if let ExprKind::Path(ref qpath) = path.kind;
             if args.len() == 1;
-            if let Some(def_id) = cx.tables.qpath_res(qpath, path.hir_id).opt_def_id();
+            if let Some(def_id) = cx.qpath_res(qpath, path.hir_id).opt_def_id();
             then {
                 let lint;
                 let msg;
                 let arg = &args[0];
-                let arg_ty = cx.tables.expr_ty(arg);
+                let arg_ty = cx.typeck_results().expr_ty(arg);
 
-                if let ty::Ref(..) = arg_ty.sty {
+                if let ty::Ref(..) = arg_ty.kind() {
                     if match_def_path(cx, def_id, &paths::DROP) {
                         lint = DROP_REF;
                         msg = DROP_REF_SUMMARY.to_string();
@@ -131,12 +131,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DropForgetRef {
                     } else {
                         return;
                     }
-                    span_note_and_lint(cx,
+                    span_lint_and_note(cx,
                                        lint,
                                        expr.span,
                                        &msg,
-                                       arg.span,
-                                       &format!("argument has type {}", arg_ty));
+                                       Some(arg.span),
+                                       &format!("argument has type `{}`", arg_ty));
                 } else if is_copy(cx, arg_ty) {
                     if match_def_path(cx, def_id, &paths::DROP) {
                         lint = DROP_COPY;
@@ -147,11 +147,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for DropForgetRef {
                     } else {
                         return;
                     }
-                    span_note_and_lint(cx,
+                    span_lint_and_note(cx,
                                        lint,
                                        expr.span,
                                        &msg,
-                                       arg.span,
+                                       Some(arg.span),
                                        &format!("argument has type {}", arg_ty));
                 }
             }

@@ -1,25 +1,25 @@
 use crate::utils::{is_allowed, snippet, span_lint_and_sugg};
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use syntax::ast::LitKind;
-use syntax::source_map::Span;
+use rustc_hir::{Expr, ExprKind, HirId};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Span;
 use unicode_normalization::UnicodeNormalization;
 
 declare_clippy_lint! {
-    /// **What it does:** Checks for the Unicode zero-width space in the code.
+    /// **What it does:** Checks for invisible Unicode characters in the code.
     ///
     /// **Why is this bad?** Having an invisible character in the code makes for all
     /// sorts of April fools, but otherwise is very much frowned upon.
     ///
     /// **Known problems:** None.
     ///
-    /// **Example:** You don't see it, but there may be a zero-width space
-    /// somewhere in this text.
-    pub ZERO_WIDTH_SPACE,
+    /// **Example:** You don't see it, but there may be a zero-width space or soft hyphen
+    /// some­where in this text.
+    pub INVISIBLE_CHARACTERS,
     correctness,
-    "using a zero-width space in a string literal, which is confusing"
+    "using an invisible character in a string literal, which is confusing"
 }
 
 declare_clippy_lint! {
@@ -56,18 +56,18 @@ declare_clippy_lint! {
     ///
     /// **Known problems** None.
     ///
-    /// **Example:** You may not see it, but “à” and “à” aren't the same string. The
+    /// **Example:** You may not see it, but "à"" and "à"" aren't the same string. The
     /// former when escaped is actually `"a\u{300}"` while the latter is `"\u{e0}"`.
     pub UNICODE_NOT_NFC,
     pedantic,
-    "using a unicode literal not in NFC normal form (see [unicode tr15](http://www.unicode.org/reports/tr15/) for further information)"
+    "using a Unicode literal not in NFC normal form (see [Unicode tr15](http://www.unicode.org/reports/tr15/) for further information)"
 }
 
-declare_lint_pass!(Unicode => [ZERO_WIDTH_SPACE, NON_ASCII_LITERAL, UNICODE_NOT_NFC]);
+declare_lint_pass!(Unicode => [INVISIBLE_CHARACTERS, NON_ASCII_LITERAL, UNICODE_NOT_NFC]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Unicode {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
-        if let ExprKind::Lit(ref lit) = expr.node {
+impl LateLintPass<'_> for Unicode {
+    fn check_expr(&mut self, cx: &LateContext<'_>, expr: &'_ Expr<'_>) {
+        if let ExprKind::Lit(ref lit) = expr.kind {
             if let LitKind::Str(_, _) = lit.node {
                 check_str(cx, lit.span, expr.hir_id)
             }
@@ -89,16 +89,19 @@ fn escape<T: Iterator<Item = char>>(s: T) -> String {
     result
 }
 
-fn check_str(cx: &LateContext<'_, '_>, span: Span, id: HirId) {
+fn check_str(cx: &LateContext<'_>, span: Span, id: HirId) {
     let string = snippet(cx, span, "");
-    if string.contains('\u{200B}') {
+    if string.chars().any(|c| ['\u{200B}', '\u{ad}', '\u{2060}'].contains(&c)) {
         span_lint_and_sugg(
             cx,
-            ZERO_WIDTH_SPACE,
+            INVISIBLE_CHARACTERS,
             span,
-            "zero-width space detected",
+            "invisible character detected",
             "consider replacing the string with",
-            string.replace("\u{200B}", "\\u{200B}"),
+            string
+                .replace("\u{200B}", "\\u{200B}")
+                .replace("\u{ad}", "\\u{AD}")
+                .replace("\u{2060}", "\\u{2060}"),
             Applicability::MachineApplicable,
         );
     }
@@ -122,7 +125,7 @@ fn check_str(cx: &LateContext<'_, '_>, span: Span, id: HirId) {
             cx,
             UNICODE_NOT_NFC,
             span,
-            "non-nfc unicode sequence detected",
+            "non-NFC Unicode sequence detected",
             "consider replacing the string with",
             string.nfc().collect::<String>(),
             Applicability::MachineApplicable,

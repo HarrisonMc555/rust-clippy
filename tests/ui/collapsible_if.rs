@@ -1,5 +1,5 @@
 // run-rustfix
-#![allow(clippy::cognitive_complexity, clippy::assertions_on_constants)]
+#![allow(clippy::assertions_on_constants)]
 
 #[rustfmt::skip]
 #[warn(clippy::collapsible_if)]
@@ -39,78 +39,6 @@ fn main() {
     if 42 == 1337 {
         if 'a' != 'A' {
             println!("world!")
-        }
-    }
-
-    // Collapse `else { if .. }` to `else if ..`
-    if x == "hello" {
-        print!("Hello ");
-    } else {
-        if y == "world" {
-            println!("world!")
-        }
-    }
-
-    if x == "hello" {
-        print!("Hello ");
-    } else {
-        if let Some(42) = Some(42) {
-            println!("world!")
-        }
-    }
-
-    if x == "hello" {
-        print!("Hello ");
-    } else {
-        if y == "world" {
-            println!("world")
-        }
-        else {
-            println!("!")
-        }
-    }
-
-    if x == "hello" {
-        print!("Hello ");
-    } else {
-        if let Some(42) = Some(42) {
-            println!("world")
-        }
-        else {
-            println!("!")
-        }
-    }
-
-    if let Some(42) = Some(42) {
-        print!("Hello ");
-    } else {
-        if let Some(42) = Some(42) {
-            println!("world")
-        }
-        else {
-            println!("!")
-        }
-    }
-
-    if let Some(42) = Some(42) {
-        print!("Hello ");
-    } else {
-        if x == "hello" {
-            println!("world")
-        }
-        else {
-            println!("!")
-        }
-    }
-
-    if let Some(42) = Some(42) {
-        print!("Hello ");
-    } else {
-        if let Some(42) = Some(42) {
-            println!("world")
-        }
-        else {
-            println!("!")
         }
     }
 
@@ -197,6 +125,39 @@ fn main() {
 
     if x == "hello" { /* Not collapsible */
         if y == "world" {
+            println!("Hello world!");
+        }
+    }
+
+    // Test behavior wrt. `let_chains`.
+    // None of the cases below should be collapsed.
+    fn truth() -> bool { true }
+
+    // Prefix:
+    if let 0 = 1 {
+        if truth() {}
+    }
+
+    // Suffix:
+    if truth() {
+        if let 0 = 1 {}
+    }
+
+    // Midfix:
+    if truth() {
+        if let 0 = 1 {
+            if truth() {}
+        }
+    }
+
+    // Fix #5962
+    if matches!(true, true) {
+        if matches!(true, true) {}
+    }
+
+    if true {
+        #[cfg(not(teehee))]
+        if true {
             println!("Hello world!");
         }
     }

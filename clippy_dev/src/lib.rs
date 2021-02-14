@@ -1,35 +1,51 @@
+#![cfg_attr(feature = "deny-warnings", deny(warnings))]
+#![feature(once_cell)]
+
 use itertools::Itertools;
-use lazy_static::lazy_static;
 use regex::Regex;
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::prelude::*;
+use std::lazy::SyncLazy;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-lazy_static! {
-    static ref DEC_CLIPPY_LINT_RE: Regex = Regex::new(
+pub mod bless;
+pub mod fmt;
+pub mod lintcheck;
+pub mod new_lint;
+pub mod ra_setup;
+pub mod serve;
+pub mod stderr_length_check;
+pub mod update_lints;
+
+static DEC_CLIPPY_LINT_RE: SyncLazy<Regex> = SyncLazy::new(|| {
+    Regex::new(
         r#"(?x)
-        declare_clippy_lint!\s*[\{(]
-        (?:\s+///.*)*
-        \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
-        (?P<cat>[a-z_]+)\s*,\s*
-        "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
-    "#
+    declare_clippy_lint!\s*[\{(]
+    (?:\s+///.*)*
+    \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
+    (?P<cat>[a-z_]+)\s*,\s*
+    "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
+"#,
     )
-    .unwrap();
-    static ref DEC_DEPRECATED_LINT_RE: Regex = Regex::new(
+    .unwrap()
+});
+
+static DEC_DEPRECATED_LINT_RE: SyncLazy<Regex> = SyncLazy::new(|| {
+    Regex::new(
         r#"(?x)
-        declare_deprecated_lint!\s*[{(]\s*
-        (?:\s+///.*)*
-        \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
-        "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
-    "#
+    declare_deprecated_lint!\s*[{(]\s*
+    (?:\s+///.*)*
+    \s+pub\s+(?P<name>[A-Z_][A-Z_0-9]*)\s*,\s*
+    "(?P<desc>(?:[^"\\]+|\\(?s).(?-s))*)"\s*[})]
+"#,
     )
-    .unwrap();
-    static ref NL_ESCAPE_RE: Regex = Regex::new(r#"\\\n\s*"#).unwrap();
-    pub static ref DOCS_LINK: String = "https://rust-lang.github.io/rust-clippy/master/index.html".to_string();
-}
+    .unwrap()
+});
+static NL_ESCAPE_RE: SyncLazy<Regex> = SyncLazy::new(|| Regex::new(r#"\\\n\s*"#).unwrap());
+
+pub static DOCS_LINK: &str = "https://rust-lang.github.io/rust-clippy/master/index.html";
 
 /// Lint data parsed from the Clippy source code.
 #[derive(Clone, PartialEq, Debug)]
@@ -42,98 +58,120 @@ pub struct Lint {
 }
 
 impl Lint {
+    #[must_use]
     pub fn new(name: &str, group: &str, desc: &str, deprecation: Option<&str>, module: &str) -> Self {
         Self {
             name: name.to_lowercase(),
             group: group.to_string(),
             desc: NL_ESCAPE_RE.replace(&desc.replace("\\\"", "\""), "").to_string(),
-            deprecation: deprecation.map(std::string::ToString::to_string),
+            deprecation: deprecation.map(ToString::to_string),
             module: module.to_string(),
         }
     }
 
     /// Returns all non-deprecated lints and non-internal lints
-    pub fn usable_lints(lints: impl Iterator<Item = Self>) -> impl Iterator<Item = Self> {
-        lints.filter(|l| l.deprecation.is_none() && !l.is_internal())
-    }
-
-    /// Returns the lints in a HashMap, grouped by the different lint groups
-    pub fn by_lint_group(lints: &[Self]) -> HashMap<String, Vec<Self>> {
+    #[must_use]
+    pub fn usable_lints(lints: &[Self]) -> Vec<Self> {
         lints
             .iter()
-            .map(|lint| (lint.group.to_string(), lint.clone()))
-            .into_group_map()
+            .filter(|l| l.deprecation.is_none() && !l.group.starts_with("internal"))
+            .cloned()
+            .collect()
     }
 
-    pub fn is_internal(&self) -> bool {
-        self.group.starts_with("internal")
+    /// Returns all internal lints (not `internal_warn` lints)
+    #[must_use]
+    pub fn internal_lints(lints: &[Self]) -> Vec<Self> {
+        lints.iter().filter(|l| l.group == "internal").cloned().collect()
+    }
+
+    /// Returns all deprecated lints
+    #[must_use]
+    pub fn deprecated_lints(lints: &[Self]) -> Vec<Self> {
+        lints.iter().filter(|l| l.deprecation.is_some()).cloned().collect()
+    }
+
+    /// Returns the lints in a `HashMap`, grouped by the different lint groups
+    #[must_use]
+    pub fn by_lint_group(lints: impl Iterator<Item = Self>) -> HashMap<String, Vec<Self>> {
+        lints.map(|lint| (lint.group.to_string(), lint)).into_group_map()
     }
 }
 
 /// Generates the Vec items for `register_lint_group` calls in `clippy_lints/src/lib.rs`.
-pub fn gen_lint_group_list(lints: Vec<Lint>) -> Vec<String> {
+#[must_use]
+pub fn gen_lint_group_list<'a>(lints: impl Iterator<Item = &'a Lint>) -> Vec<String> {
     lints
-        .into_iter()
-        .filter_map(|l| {
-            if l.is_internal() || l.deprecation.is_some() {
-                None
-            } else {
-                Some(format!("        {}::{},", l.module, l.name.to_uppercase()))
-            }
-        })
+        .map(|l| format!("        LintId::of(&{}::{}),", l.module, l.name.to_uppercase()))
         .sorted()
         .collect::<Vec<String>>()
 }
 
 /// Generates the `pub mod module_name` list in `clippy_lints/src/lib.rs`.
-pub fn gen_modules_list(lints: Vec<Lint>) -> Vec<String> {
+#[must_use]
+pub fn gen_modules_list<'a>(lints: impl Iterator<Item = &'a Lint>) -> Vec<String> {
     lints
-        .into_iter()
-        .filter_map(|l| {
-            if l.is_internal() || l.deprecation.is_some() {
-                None
-            } else {
-                Some(l.module)
-            }
-        })
+        .map(|l| &l.module)
         .unique()
-        .map(|module| format!("pub mod {};", module))
+        .map(|module| format!("mod {};", module))
         .sorted()
         .collect::<Vec<String>>()
 }
 
 /// Generates the list of lint links at the bottom of the README
-pub fn gen_changelog_lint_list(lints: Vec<Lint>) -> Vec<String> {
-    let mut lint_list_sorted: Vec<Lint> = lints;
-    lint_list_sorted.sort_by_key(|l| l.name.clone());
-    lint_list_sorted
-        .iter()
-        .filter_map(|l| {
-            if l.is_internal() {
-                None
-            } else {
-                Some(format!("[`{}`]: {}#{}", l.name, DOCS_LINK.clone(), l.name))
-            }
-        })
+#[must_use]
+pub fn gen_changelog_lint_list<'a>(lints: impl Iterator<Item = &'a Lint>) -> Vec<String> {
+    lints
+        .sorted_by_key(|l| &l.name)
+        .map(|l| format!("[`{}`]: {}#{}", l.name, DOCS_LINK, l.name))
         .collect()
 }
 
 /// Generates the `register_removed` code in `./clippy_lints/src/lib.rs`.
-pub fn gen_deprecated(lints: &[Lint]) -> Vec<String> {
+#[must_use]
+pub fn gen_deprecated<'a>(lints: impl Iterator<Item = &'a Lint>) -> Vec<String> {
     lints
-        .iter()
-        .filter_map(|l| {
-            l.clone().deprecation.and_then(|depr_text| {
-                Some(vec![
-                    "    store.register_removed(".to_string(),
-                    format!("        \"{}\",", l.name),
-                    format!("        \"{}\",", depr_text),
-                    "    );".to_string(),
-                ])
-            })
+        .flat_map(|l| {
+            l.deprecation
+                .clone()
+                .map(|depr_text| {
+                    vec![
+                        "    store.register_removed(".to_string(),
+                        format!("        \"clippy::{}\",", l.name),
+                        format!("        \"{}\",", depr_text),
+                        "    );".to_string(),
+                    ]
+                })
+                .expect("only deprecated lints should be passed")
         })
-        .flatten()
         .collect::<Vec<String>>()
+}
+
+#[must_use]
+pub fn gen_register_lint_list<'a>(
+    internal_lints: impl Iterator<Item = &'a Lint>,
+    usable_lints: impl Iterator<Item = &'a Lint>,
+) -> Vec<String> {
+    let header = "    store.register_lints(&[".to_string();
+    let footer = "    ]);".to_string();
+    let internal_lints = internal_lints
+        .sorted_by_key(|l| format!("        &{}::{},", l.module, l.name.to_uppercase()))
+        .map(|l| {
+            format!(
+                "        #[cfg(feature = \"internal-lints\")]\n        &{}::{},",
+                l.module,
+                l.name.to_uppercase()
+            )
+        });
+    let other_lints = usable_lints
+        .sorted_by_key(|l| format!("        &{}::{},", l.module, l.name.to_uppercase()))
+        .map(|l| format!("        &{}::{},", l.module, l.name.to_uppercase()))
+        .sorted();
+    let mut lint_list = vec![header];
+    lint_list.extend(internal_lints);
+    lint_list.extend(other_lints);
+    lint_list.push(footer);
+    lint_list
 }
 
 /// Gathers all files in `src/clippy_lints` and gathers all lints inside
@@ -142,32 +180,35 @@ pub fn gather_all() -> impl Iterator<Item = Lint> {
 }
 
 fn gather_from_file(dir_entry: &walkdir::DirEntry) -> impl Iterator<Item = Lint> {
-    let mut file = fs::File::open(dir_entry.path()).unwrap();
-    let mut content = String::new();
-    file.read_to_string(&mut content).unwrap();
-    let mut filename = dir_entry.path().file_stem().unwrap().to_str().unwrap();
+    let content = fs::read_to_string(dir_entry.path()).unwrap();
+    let path = dir_entry.path();
+    let filename = path.file_stem().unwrap();
+    let path_buf = path.with_file_name(filename);
+    let mut rel_path = path_buf
+        .strip_prefix(clippy_project_root().join("clippy_lints/src"))
+        .expect("only files in `clippy_lints/src` should be looked at");
     // If the lints are stored in mod.rs, we get the module name from
     // the containing directory:
     if filename == "mod" {
-        filename = dir_entry
-            .path()
-            .parent()
-            .unwrap()
-            .file_stem()
-            .unwrap()
-            .to_str()
-            .unwrap()
+        rel_path = rel_path.parent().unwrap();
     }
-    parse_contents(&content, filename)
+
+    let module = rel_path
+        .components()
+        .map(|c| c.as_os_str().to_str().unwrap())
+        .collect::<Vec<_>>()
+        .join("::");
+
+    parse_contents(&content, &module)
 }
 
-fn parse_contents(content: &str, filename: &str) -> impl Iterator<Item = Lint> {
+fn parse_contents(content: &str, module: &str) -> impl Iterator<Item = Lint> {
     let lints = DEC_CLIPPY_LINT_RE
         .captures_iter(content)
-        .map(|m| Lint::new(&m["name"], &m["cat"], &m["desc"], None, filename));
+        .map(|m| Lint::new(&m["name"], &m["cat"], &m["desc"], None, module));
     let deprecated = DEC_DEPRECATED_LINT_RE
         .captures_iter(content)
-        .map(|m| Lint::new(&m["name"], "Deprecated", &m["desc"], Some(&m["desc"]), filename));
+        .map(|m| Lint::new(&m["name"], "Deprecated", &m["desc"], Some(&m["desc"]), module));
     // Removing the `.collect::<Vec<Lint>>().into_iter()` causes some lifetime issues due to the map
     lints.chain(deprecated).collect::<Vec<Lint>>().into_iter()
 }
@@ -176,9 +217,10 @@ fn parse_contents(content: &str, filename: &str) -> impl Iterator<Item = Lint> {
 fn lint_files() -> impl Iterator<Item = walkdir::DirEntry> {
     // We use `WalkDir` instead of `fs::read_dir` here in order to recurse into subdirectories.
     // Otherwise we would not collect all the lints, for example in `clippy_lints/src/methods/`.
-    WalkDir::new("../clippy_lints/src")
+    let path = clippy_project_root().join("clippy_lints/src");
+    WalkDir::new(path)
         .into_iter()
-        .filter_map(std::result::Result::ok)
+        .filter_map(Result::ok)
         .filter(|f| f.path().extension() == Some(OsStr::new("rs")))
 }
 
@@ -194,9 +236,12 @@ pub struct FileChange {
 /// `path` is the relative path to the file on which you want to perform the replacement.
 ///
 /// See `replace_region_in_text` for documentation of the other options.
-#[allow(clippy::expect_fun_call)]
+///
+/// # Panics
+///
+/// Panics if the path could not read or then written
 pub fn replace_region_in_file<F>(
-    path: &str,
+    path: &Path,
     start: &str,
     end: &str,
     replace_start: bool,
@@ -204,21 +249,15 @@ pub fn replace_region_in_file<F>(
     replacements: F,
 ) -> FileChange
 where
-    F: Fn() -> Vec<String>,
+    F: FnOnce() -> Vec<String>,
 {
-    let mut f = fs::File::open(path).expect(&format!("File not found: {}", path));
-    let mut contents = String::new();
-    f.read_to_string(&mut contents)
-        .expect("Something went wrong reading the file");
+    let contents = fs::read_to_string(path).unwrap_or_else(|e| panic!("Cannot read from {}: {}", path.display(), e));
     let file_change = replace_region_in_text(&contents, start, end, replace_start, replacements);
 
     if write_back {
-        let mut f = fs::File::create(path).expect(&format!("File not found: {}", path));
-        f.write_all(file_change.new_lines.as_bytes())
-            .expect("Unable to write file");
-        // Ensure we write the changes with a trailing newline so that
-        // the file has the proper line endings.
-        f.write_all(b"\n").expect("Unable to write file");
+        if let Err(e) = fs::write(path, file_change.new_lines.as_bytes()) {
+            panic!("Cannot write to {}: {}", path.display(), e);
+        }
     }
     file_change
 }
@@ -241,31 +280,36 @@ where
 ///
 /// ```
 /// let the_text = "replace_start\nsome text\nthat will be replaced\nreplace_end";
-/// let result = clippy_dev::replace_region_in_text(the_text, r#"replace_start"#, r#"replace_end"#, false, || {
-///     vec!["a different".to_string(), "text".to_string()]
-/// })
-/// .new_lines;
+/// let result =
+///     clippy_dev::replace_region_in_text(the_text, "replace_start", "replace_end", false, || {
+///         vec!["a different".to_string(), "text".to_string()]
+///     })
+///     .new_lines;
 /// assert_eq!("replace_start\na different\ntext\nreplace_end", result);
 /// ```
+///
+/// # Panics
+///
+/// Panics if start or end is not valid regex
 pub fn replace_region_in_text<F>(text: &str, start: &str, end: &str, replace_start: bool, replacements: F) -> FileChange
 where
-    F: Fn() -> Vec<String>,
+    F: FnOnce() -> Vec<String>,
 {
-    let lines = text.lines();
+    let replace_it = replacements();
     let mut in_old_region = false;
     let mut found = false;
     let mut new_lines = vec![];
     let start = Regex::new(start).unwrap();
     let end = Regex::new(end).unwrap();
 
-    for line in lines.clone() {
+    for line in text.lines() {
         if in_old_region {
-            if end.is_match(&line) {
+            if end.is_match(line) {
                 in_old_region = false;
-                new_lines.extend(replacements());
+                new_lines.extend(replace_it.clone());
                 new_lines.push(line.to_string());
             }
-        } else if start.is_match(&line) {
+        } else if start.is_match(line) {
             if !replace_start {
                 new_lines.push(line.to_string());
             }
@@ -277,16 +321,44 @@ where
     }
 
     if !found {
-        // This happens if the provided regex in `clippy_dev/src/main.rs` is not found in the
+        // This happens if the provided regex in `clippy_dev/src/main.rs` does not match in the
         // given text or file. Most likely this is an error on the programmer's side and the Regex
         // is incorrect.
-        eprintln!("error: regex `{:?}` not found. You may have to update it.", start);
+        eprintln!("error: regex \n{:?}\ndoesn't match. You may have to update it.", start);
+        std::process::exit(1);
     }
 
-    FileChange {
-        changed: lines.ne(new_lines.clone()),
-        new_lines: new_lines.join("\n"),
+    let mut new_lines = new_lines.join("\n");
+    if text.ends_with('\n') {
+        new_lines.push('\n');
     }
+    let changed = new_lines != text;
+    FileChange { changed, new_lines }
+}
+
+/// Returns the path to the Clippy project directory
+///
+/// # Panics
+///
+/// Panics if the current directory could not be retrieved, there was an error reading any of the
+/// Cargo.toml files or ancestor directory is the clippy root directory
+#[must_use]
+pub fn clippy_project_root() -> PathBuf {
+    let current_dir = std::env::current_dir().unwrap();
+    for path in current_dir.ancestors() {
+        let result = std::fs::read_to_string(path.join("Cargo.toml"));
+        if let Err(err) = &result {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                continue;
+            }
+        }
+
+        let content = result.unwrap();
+        if content.contains("[package]\nname = \"clippy\"") {
+            return path.to_path_buf();
+        }
+    }
+    panic!("error: Can't determine root of project. Please run inside a Clippy working dir.");
 }
 
 #[test]
@@ -363,7 +435,7 @@ fn test_replace_region_no_changes() {
         changed: false,
         new_lines: "123\n456\n789".to_string(),
     };
-    let result = replace_region_in_text(text, r#"^\s*123$"#, r#"^\s*456"#, false, || vec![]);
+    let result = replace_region_in_text(text, r#"^\s*123$"#, r#"^\s*456"#, false, Vec::new);
     assert_eq!(expected, result);
 }
 
@@ -382,7 +454,7 @@ fn test_usable_lints() {
         None,
         "module_name",
     )];
-    assert_eq!(expected, Lint::usable_lints(lints.into_iter()).collect::<Vec<Lint>>());
+    assert_eq!(expected, Lint::usable_lints(&lints));
 }
 
 #[test]
@@ -404,7 +476,7 @@ fn test_by_lint_group() {
         "group2".to_string(),
         vec![Lint::new("should_assert_eq2", "group2", "abc", None, "module_name")],
     );
-    assert_eq!(expected, Lint::by_lint_group(&lints));
+    assert_eq!(expected, Lint::by_lint_group(lints.into_iter()));
 }
 
 #[test]
@@ -412,13 +484,12 @@ fn test_gen_changelog_lint_list() {
     let lints = vec![
         Lint::new("should_assert_eq", "group1", "abc", None, "module_name"),
         Lint::new("should_assert_eq2", "group2", "abc", None, "module_name"),
-        Lint::new("incorrect_internal", "internal_style", "abc", None, "module_name"),
     ];
     let expected = vec![
         format!("[`should_assert_eq`]: {}#should_assert_eq", DOCS_LINK.to_string()),
         format!("[`should_assert_eq2`]: {}#should_assert_eq2", DOCS_LINK.to_string()),
     ];
-    assert_eq!(expected, gen_changelog_lint_list(lints));
+    assert_eq!(expected, gen_changelog_lint_list(lints.iter()));
 }
 
 #[test]
@@ -438,37 +509,38 @@ fn test_gen_deprecated() {
             Some("will be removed"),
             "module_name",
         ),
-        Lint::new("should_assert_eq2", "group2", "abc", None, "module_name"),
     ];
     let expected: Vec<String> = vec![
         "    store.register_removed(",
-        "        \"should_assert_eq\",",
+        "        \"clippy::should_assert_eq\",",
         "        \"has been superseded by should_assert_eq2\",",
         "    );",
         "    store.register_removed(",
-        "        \"another_deprecated\",",
+        "        \"clippy::another_deprecated\",",
         "        \"will be removed\",",
         "    );",
     ]
     .into_iter()
     .map(String::from)
     .collect();
-    assert_eq!(expected, gen_deprecated(&lints));
+    assert_eq!(expected, gen_deprecated(lints.iter()));
+}
+
+#[test]
+#[should_panic]
+fn test_gen_deprecated_fail() {
+    let lints = vec![Lint::new("should_assert_eq2", "group2", "abc", None, "module_name")];
+    let _ = gen_deprecated(lints.iter());
 }
 
 #[test]
 fn test_gen_modules_list() {
     let lints = vec![
         Lint::new("should_assert_eq", "group1", "abc", None, "module_name"),
-        Lint::new("should_assert_eq2", "group2", "abc", Some("abc"), "deprecated"),
         Lint::new("incorrect_stuff", "group3", "abc", None, "another_module"),
-        Lint::new("incorrect_internal", "internal_style", "abc", None, "module_name"),
     ];
-    let expected = vec![
-        "pub mod another_module;".to_string(),
-        "pub mod module_name;".to_string(),
-    ];
-    assert_eq!(expected, gen_modules_list(lints));
+    let expected = vec!["mod another_module;".to_string(), "mod module_name;".to_string()];
+    assert_eq!(expected, gen_modules_list(lints.iter()));
 }
 
 #[test]
@@ -476,12 +548,12 @@ fn test_gen_lint_group_list() {
     let lints = vec![
         Lint::new("abc", "group1", "abc", None, "module_name"),
         Lint::new("should_assert_eq", "group1", "abc", None, "module_name"),
-        Lint::new("should_assert_eq2", "group2", "abc", Some("abc"), "deprecated"),
-        Lint::new("incorrect_internal", "internal_style", "abc", None, "module_name"),
+        Lint::new("internal", "internal_style", "abc", None, "module_name"),
     ];
     let expected = vec![
-        "        module_name::ABC,".to_string(),
-        "        module_name::SHOULD_ASSERT_EQ,".to_string(),
+        "        LintId::of(&module_name::ABC),".to_string(),
+        "        LintId::of(&module_name::INTERNAL),".to_string(),
+        "        LintId::of(&module_name::SHOULD_ASSERT_EQ),".to_string(),
     ];
-    assert_eq!(expected, gen_lint_group_list(lints));
+    assert_eq!(expected, gen_lint_group_list(lints.iter()));
 }

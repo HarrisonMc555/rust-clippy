@@ -1,11 +1,15 @@
 use crate::utils::{span_lint, span_lint_and_then};
-use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_tool_lint, impl_lint_pass};
-use syntax::ast::*;
-use syntax::attr;
-use syntax::source_map::Span;
-use syntax::symbol::LocalInternedString;
-use syntax::visit::{walk_block, walk_expr, walk_pat, Visitor};
+use rustc_ast::ast::{
+    Arm, AssocItem, AssocItemKind, Attribute, Block, FnDecl, FnKind, Item, ItemKind, Local, Pat, PatKind,
+};
+use rustc_ast::visit::{walk_block, walk_expr, walk_pat, Visitor};
+use rustc_lint::{EarlyContext, EarlyLintPass};
+use rustc_middle::lint::in_external_macro;
+use rustc_session::{declare_tool_lint, impl_lint_pass};
+use rustc_span::source_map::Span;
+use rustc_span::sym;
+use rustc_span::symbol::{Ident, Symbol};
+use std::cmp::Ordering;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for names that are very similar and thus confusing.
@@ -71,13 +75,13 @@ pub struct NonExpressiveNames {
 impl_lint_pass!(NonExpressiveNames => [SIMILAR_NAMES, MANY_SINGLE_CHAR_NAMES, JUST_UNDERSCORES_AND_DIGITS]);
 
 struct ExistingName {
-    interned: LocalInternedString,
+    interned: Symbol,
     span: Span,
     len: usize,
-    whitelist: &'static [&'static str],
+    exemptions: &'static [&'static str],
 }
 
-struct SimilarNamesLocalVisitor<'a, 'tcx: 'a> {
+struct SimilarNamesLocalVisitor<'a, 'tcx> {
     names: Vec<ExistingName>,
     cx: &'a EarlyContext<'tcx>,
     lint: &'a NonExpressiveNames,
@@ -86,11 +90,11 @@ struct SimilarNamesLocalVisitor<'a, 'tcx: 'a> {
     single_char_names: Vec<Vec<Ident>>,
 }
 
-impl<'a, 'tcx: 'a> SimilarNamesLocalVisitor<'a, 'tcx> {
+impl<'a, 'tcx> SimilarNamesLocalVisitor<'a, 'tcx> {
     fn check_single_char_names(&self) {
         let num_single_char_names = self.single_char_names.iter().flatten().count();
         let threshold = self.lint.single_char_binding_names_threshold;
-        if num_single_char_names as u64 >= threshold {
+        if num_single_char_names as u64 > threshold {
             let span = self
                 .single_char_names
                 .iter()
@@ -113,7 +117,7 @@ impl<'a, 'tcx: 'a> SimilarNamesLocalVisitor<'a, 'tcx> {
 // this list contains lists of names that are allowed to be similar
 // the assumption is that no name is ever contained in multiple lists.
 #[rustfmt::skip]
-const WHITELIST: &[&[&str]] = &[
+const ALLOWED_TO_BE_SIMILAR: &[&[&str]] = &[
     &["parsed", "parser"],
     &["lhs", "rhs"],
     &["tx", "rx"],
@@ -123,37 +127,43 @@ const WHITELIST: &[&[&str]] = &[
     &["lit", "lint"],
 ];
 
-struct SimilarNamesNameVisitor<'a: 'b, 'tcx: 'a, 'b>(&'b mut SimilarNamesLocalVisitor<'a, 'tcx>);
+struct SimilarNamesNameVisitor<'a, 'tcx, 'b>(&'b mut SimilarNamesLocalVisitor<'a, 'tcx>);
 
-impl<'a, 'tcx: 'a, 'b> Visitor<'tcx> for SimilarNamesNameVisitor<'a, 'tcx, 'b> {
+impl<'a, 'tcx, 'b> Visitor<'tcx> for SimilarNamesNameVisitor<'a, 'tcx, 'b> {
     fn visit_pat(&mut self, pat: &'tcx Pat) {
-        match pat.node {
-            PatKind::Ident(_, ident, _) => self.check_ident(ident),
+        match pat.kind {
+            PatKind::Ident(_, ident, _) => {
+                if !pat.span.from_expansion() {
+                    self.check_ident(ident);
+                }
+            },
             PatKind::Struct(_, ref fields, _) => {
                 for field in fields {
-                    if !field.node.is_shorthand {
-                        self.visit_pat(&field.node.pat);
+                    if !field.is_shorthand {
+                        self.visit_pat(&field.pat);
                     }
                 }
             },
+            // just go through the first pattern, as either all patterns
+            // bind the same bindings or rustc would have errored much earlier
+            PatKind::Or(ref pats) => self.visit_pat(&pats[0]),
             _ => walk_pat(self, pat),
         }
     }
-    fn visit_mac(&mut self, _mac: &Mac) {
-        // do not check macs
-    }
 }
 
-fn get_whitelist(interned_name: &str) -> Option<&'static [&'static str]> {
-    for &allow in WHITELIST {
-        if whitelisted(interned_name, allow) {
-            return Some(allow);
+#[must_use]
+fn get_exemptions(interned_name: &str) -> Option<&'static [&'static str]> {
+    for &list in ALLOWED_TO_BE_SIMILAR {
+        if allowed_to_be_similar(interned_name, list) {
+            return Some(list);
         }
     }
     None
 }
 
-fn whitelisted(interned_name: &str, list: &[&str]) -> bool {
+#[must_use]
+fn allowed_to_be_similar(interned_name: &str, list: &[&str]) -> bool {
     list.iter()
         .any(|&name| interned_name.starts_with(name) || interned_name.ends_with(name))
 }
@@ -169,7 +179,9 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
             .any(|id| id.name == ident.name)
         {
             return;
-        } else if let Some(scope) = &mut self.0.single_char_names.last_mut() {
+        }
+
+        if let Some(scope) = &mut self.0.single_char_names.last_mut() {
             scope.push(ident);
         }
     }
@@ -189,6 +201,10 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
             );
             return;
         }
+        if interned_name.starts_with('_') {
+            // these bindings are typically unused or represent an ignored portion of a destructuring pattern
+            return;
+        }
         let count = interned_name.chars().count();
         if count < 3 {
             if count == 1 {
@@ -197,67 +213,76 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
             return;
         }
         for existing_name in &self.0.names {
-            if whitelisted(&interned_name, existing_name.whitelist) {
+            if allowed_to_be_similar(&interned_name, existing_name.exemptions) {
                 continue;
             }
             let mut split_at = None;
-            if existing_name.len > count {
-                if existing_name.len - count != 1 || levenstein_not_1(&interned_name, &existing_name.interned) {
-                    continue;
-                }
-            } else if existing_name.len < count {
-                if count - existing_name.len != 1 || levenstein_not_1(&existing_name.interned, &interned_name) {
-                    continue;
-                }
-            } else {
-                let mut interned_chars = interned_name.chars();
-                let mut existing_chars = existing_name.interned.chars();
-                let first_i = interned_chars.next().expect("we know we have at least one char");
-                let first_e = existing_chars.next().expect("we know we have at least one char");
-                let eq_or_numeric = |(a, b): (char, char)| a == b || a.is_numeric() && b.is_numeric();
-
-                if eq_or_numeric((first_i, first_e)) {
-                    let last_i = interned_chars.next_back().expect("we know we have at least two chars");
-                    let last_e = existing_chars.next_back().expect("we know we have at least two chars");
-                    if eq_or_numeric((last_i, last_e)) {
-                        if interned_chars
-                            .zip(existing_chars)
-                            .filter(|&ie| !eq_or_numeric(ie))
-                            .count()
-                            != 1
-                        {
-                            continue;
-                        }
-                    } else {
-                        let second_last_i = interned_chars
-                            .next_back()
-                            .expect("we know we have at least three chars");
-                        let second_last_e = existing_chars
-                            .next_back()
-                            .expect("we know we have at least three chars");
-                        if !eq_or_numeric((second_last_i, second_last_e))
-                            || second_last_i == '_'
-                            || !interned_chars.zip(existing_chars).all(eq_or_numeric)
-                        {
-                            // allowed similarity foo_x, foo_y
-                            // or too many chars differ (foo_x, boo_y) or (foox, booy)
-                            continue;
-                        }
-                        split_at = interned_name.char_indices().rev().next().map(|(i, _)| i);
-                    }
-                } else {
-                    let second_i = interned_chars.next().expect("we know we have at least two chars");
-                    let second_e = existing_chars.next().expect("we know we have at least two chars");
-                    if !eq_or_numeric((second_i, second_e))
-                        || second_i == '_'
-                        || !interned_chars.zip(existing_chars).all(eq_or_numeric)
+            match existing_name.len.cmp(&count) {
+                Ordering::Greater => {
+                    if existing_name.len - count != 1
+                        || levenstein_not_1(&interned_name, &existing_name.interned.as_str())
                     {
-                        // allowed similarity x_foo, y_foo
-                        // or too many chars differ (x_foo, y_boo) or (xfoo, yboo)
                         continue;
                     }
-                    split_at = interned_name.chars().next().map(char::len_utf8);
-                }
+                },
+                Ordering::Less => {
+                    if count - existing_name.len != 1
+                        || levenstein_not_1(&existing_name.interned.as_str(), &interned_name)
+                    {
+                        continue;
+                    }
+                },
+                Ordering::Equal => {
+                    let mut interned_chars = interned_name.chars();
+                    let interned_str = existing_name.interned.as_str();
+                    let mut existing_chars = interned_str.chars();
+                    let first_i = interned_chars.next().expect("we know we have at least one char");
+                    let first_e = existing_chars.next().expect("we know we have at least one char");
+                    let eq_or_numeric = |(a, b): (char, char)| a == b || a.is_numeric() && b.is_numeric();
+
+                    if eq_or_numeric((first_i, first_e)) {
+                        let last_i = interned_chars.next_back().expect("we know we have at least two chars");
+                        let last_e = existing_chars.next_back().expect("we know we have at least two chars");
+                        if eq_or_numeric((last_i, last_e)) {
+                            if interned_chars
+                                .zip(existing_chars)
+                                .filter(|&ie| !eq_or_numeric(ie))
+                                .count()
+                                != 1
+                            {
+                                continue;
+                            }
+                        } else {
+                            let second_last_i = interned_chars
+                                .next_back()
+                                .expect("we know we have at least three chars");
+                            let second_last_e = existing_chars
+                                .next_back()
+                                .expect("we know we have at least three chars");
+                            if !eq_or_numeric((second_last_i, second_last_e))
+                                || second_last_i == '_'
+                                || !interned_chars.zip(existing_chars).all(eq_or_numeric)
+                            {
+                                // allowed similarity foo_x, foo_y
+                                // or too many chars differ (foo_x, boo_y) or (foox, booy)
+                                continue;
+                            }
+                            split_at = interned_name.char_indices().rev().next().map(|(i, _)| i);
+                        }
+                    } else {
+                        let second_i = interned_chars.next().expect("we know we have at least two chars");
+                        let second_e = existing_chars.next().expect("we know we have at least two chars");
+                        if !eq_or_numeric((second_i, second_e))
+                            || second_i == '_'
+                            || !interned_chars.zip(existing_chars).all(eq_or_numeric)
+                        {
+                            // allowed similarity x_foo, y_foo
+                            // or too many chars differ (x_foo, y_boo) or (xfoo, yboo)
+                            continue;
+                        }
+                        split_at = interned_name.chars().next().map(char::len_utf8);
+                    }
+                },
             }
             span_lint_and_then(
                 self.0.cx,
@@ -282,8 +307,8 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
             return;
         }
         self.0.names.push(ExistingName {
-            whitelist: get_whitelist(&interned_name).unwrap_or(&[]),
-            interned: interned_name,
+            exemptions: get_exemptions(&interned_name).unwrap_or(&[]),
+            interned: ident.name,
             span: ident.span,
             len: count,
         });
@@ -323,9 +348,7 @@ impl<'a, 'tcx> Visitor<'tcx> for SimilarNamesLocalVisitor<'a, 'tcx> {
         self.single_char_names.push(vec![]);
 
         self.apply(|this| {
-            // just go through the first pattern, as either all patterns
-            // bind the same bindings or rustc would have errored much earlier
-            SimilarNamesNameVisitor(this).visit_pat(&arm.pats[0]);
+            SimilarNamesNameVisitor(this).visit_pat(&arm.pat);
             this.apply(|this| walk_expr(this, &arm.body));
         });
 
@@ -335,27 +358,32 @@ impl<'a, 'tcx> Visitor<'tcx> for SimilarNamesLocalVisitor<'a, 'tcx> {
     fn visit_item(&mut self, _: &Item) {
         // do not recurse into inner items
     }
-    fn visit_mac(&mut self, _mac: &Mac) {
-        // do not check macs
-    }
 }
 
 impl EarlyLintPass for NonExpressiveNames {
     fn check_item(&mut self, cx: &EarlyContext<'_>, item: &Item) {
-        if let ItemKind::Fn(ref decl, _, _, ref blk) = item.node {
-            do_check(self, cx, &item.attrs, decl, blk);
+        if in_external_macro(cx.sess, item.span) {
+            return;
+        }
+
+        if let ItemKind::Fn(box FnKind(_, ref sig, _, Some(ref blk))) = item.kind {
+            do_check(self, cx, &item.attrs, &sig.decl, blk);
         }
     }
 
-    fn check_impl_item(&mut self, cx: &EarlyContext<'_>, item: &ImplItem) {
-        if let ImplItemKind::Method(ref sig, ref blk) = item.node {
+    fn check_impl_item(&mut self, cx: &EarlyContext<'_>, item: &AssocItem) {
+        if in_external_macro(cx.sess, item.span) {
+            return;
+        }
+
+        if let AssocItemKind::Fn(box FnKind(_, ref sig, _, Some(ref blk))) = item.kind {
             do_check(self, cx, &item.attrs, &sig.decl, blk);
         }
     }
 }
 
 fn do_check(lint: &mut NonExpressiveNames, cx: &EarlyContext<'_>, attrs: &[Attribute], decl: &FnDecl, blk: &Block) {
-    if !attr::contains_name(attrs, sym!(test)) {
+    if !attrs.iter().any(|attr| attr.has_name(sym::test)) {
         let mut visitor = SimilarNamesLocalVisitor {
             names: Vec::new(),
             cx,
@@ -375,6 +403,7 @@ fn do_check(lint: &mut NonExpressiveNames, cx: &EarlyContext<'_>, attrs: &[Attri
 }
 
 /// Precondition: `a_name.chars().count() < b_name.chars().count()`.
+#[must_use]
 fn levenstein_not_1(a_name: &str, b_name: &str) -> bool {
     debug_assert!(a_name.chars().count() < b_name.chars().count());
     let mut a_chars = a_name.chars();
@@ -386,11 +415,10 @@ fn levenstein_not_1(a_name: &str, b_name: &str) -> bool {
         if let Some(b2) = b_chars.next() {
             // check if there's just one character inserted
             return a != b2 || a_chars.ne(b_chars);
-        } else {
-            // tuple
-            // ntuple
-            return true;
         }
+        // tuple
+        // ntuple
+        return true;
     }
     // for item in items
     true

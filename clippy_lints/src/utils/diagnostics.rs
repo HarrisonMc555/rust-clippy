@@ -1,33 +1,21 @@
 //! Clippy wrappers around rustc's diagnostic functions.
 
-use rustc::hir::HirId;
-use rustc::lint::{LateContext, Lint, LintContext};
-use rustc_errors::{Applicability, CodeSuggestion, Substitution, SubstitutionPart, SuggestionStyle};
+use rustc_errors::{Applicability, DiagnosticBuilder};
+use rustc_hir::HirId;
+use rustc_lint::{LateContext, Lint, LintContext};
+use rustc_span::source_map::{MultiSpan, Span};
 use std::env;
-use syntax::errors::DiagnosticBuilder;
-use syntax::source_map::{MultiSpan, Span};
 
-/// Wrapper around `DiagnosticBuilder` that adds a link to Clippy documentation for the emitted lint
-struct DiagnosticWrapper<'a>(DiagnosticBuilder<'a>);
-
-impl<'a> Drop for DiagnosticWrapper<'a> {
-    fn drop(&mut self) {
-        self.0.emit();
-    }
-}
-
-impl<'a> DiagnosticWrapper<'a> {
-    fn docs_link(&mut self, lint: &'static Lint) {
-        if env::var("CLIPPY_DISABLE_DOCS_LINKS").is_err() {
-            self.0.help(&format!(
-                "for further information visit https://rust-lang.github.io/rust-clippy/{}/index.html#{}",
-                &option_env!("RUST_RELEASE_NUM").map_or("master".to_string(), |n| {
-                    // extract just major + minor version and ignore patch versions
-                    format!("rust-{}", n.rsplitn(2, '.').nth(1).unwrap())
-                }),
-                lint.name_lower().replacen("clippy::", "", 1)
-            ));
-        }
+fn docs_link(diag: &mut DiagnosticBuilder<'_>, lint: &'static Lint) {
+    if env::var("CLIPPY_DISABLE_DOCS_LINKS").is_err() {
+        diag.help(&format!(
+            "for further information visit https://rust-lang.github.io/rust-clippy/{}/index.html#{}",
+            &option_env!("RUST_RELEASE_NUM").map_or("master".to_string(), |n| {
+                // extract just major + minor version and ignore patch versions
+                format!("rust-{}", n.rsplitn(2, '.').nth(1).unwrap())
+            }),
+            lint.name_lower().replacen("clippy::", "", 1)
+        ));
     }
 }
 
@@ -48,8 +36,12 @@ impl<'a> DiagnosticWrapper<'a> {
 /// 17 |     std::mem::forget(seven);
 ///    |     ^^^^^^^^^^^^^^^^^^^^^^^
 /// ```
-pub fn span_lint<'a, T: LintContext<'a>>(cx: &T, lint: &'static Lint, sp: impl Into<MultiSpan>, msg: &str) {
-    DiagnosticWrapper(cx.struct_span_lint(lint, sp, msg)).docs_link(lint);
+pub fn span_lint<T: LintContext>(cx: &T, lint: &'static Lint, sp: impl Into<MultiSpan>, msg: &str) {
+    cx.struct_span_lint(lint, sp, |diag| {
+        let mut diag = diag.build(msg);
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
 /// Same as `span_lint` but with an extra `help` message.
@@ -57,7 +49,9 @@ pub fn span_lint<'a, T: LintContext<'a>>(cx: &T, lint: &'static Lint, sp: impl I
 /// Use this if you want to provide some general help but
 /// can't provide a specific machine applicable suggestion.
 ///
-/// The `help` message is not attached to any `Span`.
+/// The `help` message can be optionally attached to a `Span`.
+///
+/// If you change the signature, remember to update the internal lint `CollapsibleCalls`
 ///
 /// # Example
 ///
@@ -68,24 +62,34 @@ pub fn span_lint<'a, T: LintContext<'a>>(cx: &T, lint: &'static Lint, sp: impl I
 /// 6  |     let other_f64_nan = 0.0f64 / 0.0;
 ///    |                         ^^^^^^^^^^^^
 ///    |
-///    = help: Consider using `std::f64::NAN` if you would like a constant representing NaN
+///    = help: Consider using `f64::NAN` if you would like a constant representing NaN
 /// ```
-pub fn span_help_and_lint<'a, 'tcx: 'a, T: LintContext<'tcx>>(
+pub fn span_lint_and_help<'a, T: LintContext>(
     cx: &'a T,
     lint: &'static Lint,
     span: Span,
     msg: &str,
+    help_span: Option<Span>,
     help: &str,
 ) {
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, span, msg));
-    db.0.help(help);
-    db.docs_link(lint);
+    cx.struct_span_lint(lint, span, |diag| {
+        let mut diag = diag.build(msg);
+        if let Some(help_span) = help_span {
+            diag.span_help(help_span, help);
+        } else {
+            diag.help(help);
+        }
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
 /// Like `span_lint` but with a `note` section instead of a `help` message.
 ///
 /// The `note` message is presented separately from the main lint message
 /// and is attached to a specific span:
+///
+/// If you change the signature, remember to update the internal lint `CollapsibleCalls`
 ///
 /// # Example
 ///
@@ -103,52 +107,64 @@ pub fn span_help_and_lint<'a, 'tcx: 'a, T: LintContext<'tcx>>(
 /// 10 |     forget(&SomeStruct);
 ///    |            ^^^^^^^^^^^
 /// ```
-pub fn span_note_and_lint<'a, 'tcx: 'a, T: LintContext<'tcx>>(
+pub fn span_lint_and_note<'a, T: LintContext>(
     cx: &'a T,
     lint: &'static Lint,
-    span: Span,
+    span: impl Into<MultiSpan>,
     msg: &str,
-    note_span: Span,
+    note_span: Option<Span>,
     note: &str,
 ) {
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, span, msg));
-    if note_span == span {
-        db.0.note(note);
-    } else {
-        db.0.span_note(note_span, note);
-    }
-    db.docs_link(lint);
+    cx.struct_span_lint(lint, span, |diag| {
+        let mut diag = diag.build(msg);
+        if let Some(note_span) = note_span {
+            diag.span_note(note_span, note);
+        } else {
+            diag.note(note);
+        }
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
-pub fn span_lint_and_then<'a, 'tcx: 'a, T: LintContext<'tcx>, F>(
-    cx: &'a T,
-    lint: &'static Lint,
-    sp: Span,
-    msg: &str,
-    f: F,
-) where
+/// Like `span_lint` but allows to add notes, help and suggestions using a closure.
+///
+/// If you need to customize your lint output a lot, use this function.
+/// If you change the signature, remember to update the internal lint `CollapsibleCalls`
+pub fn span_lint_and_then<'a, T: LintContext, F>(cx: &'a T, lint: &'static Lint, sp: Span, msg: &str, f: F)
+where
     F: for<'b> FnOnce(&mut DiagnosticBuilder<'b>),
 {
-    let mut db = DiagnosticWrapper(cx.struct_span_lint(lint, sp, msg));
-    f(&mut db.0);
-    db.docs_link(lint);
+    cx.struct_span_lint(lint, sp, |diag| {
+        let mut diag = diag.build(msg);
+        f(&mut diag);
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
-pub fn span_lint_hir(cx: &LateContext<'_, '_>, lint: &'static Lint, hir_id: HirId, sp: Span, msg: &str) {
-    DiagnosticWrapper(cx.tcx.struct_span_lint_hir(lint, hir_id, sp, msg)).docs_link(lint);
+pub fn span_lint_hir(cx: &LateContext<'_>, lint: &'static Lint, hir_id: HirId, sp: Span, msg: &str) {
+    cx.tcx.struct_span_lint_hir(lint, hir_id, sp, |diag| {
+        let mut diag = diag.build(msg);
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
 pub fn span_lint_hir_and_then(
-    cx: &LateContext<'_, '_>,
+    cx: &LateContext<'_>,
     lint: &'static Lint,
     hir_id: HirId,
     sp: Span,
     msg: &str,
     f: impl FnOnce(&mut DiagnosticBuilder<'_>),
 ) {
-    let mut db = DiagnosticWrapper(cx.tcx.struct_span_lint_hir(lint, hir_id, sp, msg));
-    f(&mut db.0);
-    db.docs_link(lint);
+    cx.tcx.struct_span_lint_hir(lint, hir_id, sp, |diag| {
+        let mut diag = diag.build(msg);
+        f(&mut diag);
+        docs_link(&mut diag, lint);
+        diag.emit();
+    });
 }
 
 /// Add a span lint with a suggestion on how to fix it.
@@ -156,6 +172,10 @@ pub fn span_lint_hir_and_then(
 /// These suggestions can be parsed by rustfix to allow it to automatically fix your code.
 /// In the example below, `help` is `"try"` and `sugg` is the suggested replacement `".any(|x| x >
 /// 2)"`.
+///
+/// If you change the signature, remember to update the internal lint `CollapsibleCalls`
+///
+/// # Example
 ///
 /// ```ignore
 /// error: This `.fold` can be more succinctly expressed as `.any`
@@ -166,7 +186,8 @@ pub fn span_lint_hir_and_then(
 ///     |
 ///     = note: `-D fold-any` implied by `-D warnings`
 /// ```
-pub fn span_lint_and_sugg<'a, 'tcx: 'a, T: LintContext<'tcx>>(
+#[cfg_attr(feature = "internal-lints", allow(clippy::collapsible_span_lint_calls))]
+pub fn span_lint_and_sugg<'a, T: LintContext>(
     cx: &'a T,
     lint: &'static Lint,
     sp: Span,
@@ -175,8 +196,8 @@ pub fn span_lint_and_sugg<'a, 'tcx: 'a, T: LintContext<'tcx>>(
     sugg: String,
     applicability: Applicability,
 ) {
-    span_lint_and_then(cx, lint, sp, msg, |db| {
-        db.span_suggestion(sp, help, sugg, applicability);
+    span_lint_and_then(cx, lint, sp, msg, |diag| {
+        diag.span_suggestion(sp, help, sugg, applicability);
     });
 }
 
@@ -186,20 +207,20 @@ pub fn span_lint_and_sugg<'a, 'tcx: 'a, T: LintContext<'tcx>>(
 /// appear once per
 /// replacement. In human-readable format though, it only appears once before
 /// the whole suggestion.
-pub fn multispan_sugg<I>(db: &mut DiagnosticBuilder<'_>, help_msg: String, sugg: I)
+pub fn multispan_sugg<I>(diag: &mut DiagnosticBuilder<'_>, help_msg: &str, sugg: I)
 where
     I: IntoIterator<Item = (Span, String)>,
 {
-    let sugg = CodeSuggestion {
-        substitutions: vec![Substitution {
-            parts: sugg
-                .into_iter()
-                .map(|(span, snippet)| SubstitutionPart { snippet, span })
-                .collect(),
-        }],
-        msg: help_msg,
-        style: SuggestionStyle::ShowCode,
-        applicability: Applicability::Unspecified,
-    };
-    db.suggestions.push(sugg);
+    multispan_sugg_with_applicability(diag, help_msg, Applicability::Unspecified, sugg)
+}
+
+pub fn multispan_sugg_with_applicability<I>(
+    diag: &mut DiagnosticBuilder<'_>,
+    help_msg: &str,
+    applicability: Applicability,
+    sugg: I,
+) where
+    I: IntoIterator<Item = (Span, String)>,
+{
+    diag.multipart_suggestion(help_msg, sugg.into_iter().collect(), applicability);
 }

@@ -1,4 +1,8 @@
+// run-rustfix
+
 #![warn(clippy::or_fun_call)]
+#![allow(dead_code)]
+#![allow(clippy::unnecessary_wraps)]
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -52,8 +56,6 @@ fn or_fun_call() {
     let with_vec = Some(vec![1]);
     with_vec.unwrap_or(vec![]);
 
-    // FIXME #944: ~|SUGGESTION with_vec.unwrap_or_else(|| vec![]);
-
     let without_default = Some(Foo);
     without_default.unwrap_or(Foo::new());
 
@@ -69,6 +71,15 @@ fn or_fun_call() {
     let opt = Some(1);
     let hello = "Hello";
     let _ = opt.ok_or(format!("{} world.", hello));
+
+    // index
+    let map = HashMap::<u64, u64>::new();
+    let _ = Some(1).unwrap_or(map[&1]);
+    let map = BTreeMap::<u64, u64>::new();
+    let _ = Some(1).unwrap_or(map[&1]);
+    // don't lint index vec
+    let vec = vec![1];
+    let _ = Some(1).unwrap_or(vec[1]);
 }
 
 struct Foo(u8);
@@ -94,6 +105,25 @@ fn test_or_with_ctors() {
     let b = "b".to_string();
     let _ = Some(Bar("a".to_string(), Duration::from_secs(1)))
         .or(Some(Bar(b, Duration::from_secs(2))));
+
+    let vec = vec!["foo"];
+    let _ = opt.ok_or(vec.len());
+
+    let array = ["foo"];
+    let _ = opt.ok_or(array.len());
+
+    let slice = &["foo"][..];
+    let _ = opt.ok_or(slice.len());
+}
+
+// Issue 4514 - early return
+fn f() -> Option<()> {
+    let a = Some(1);
+    let b = 1i32;
+
+    let _ = a.unwrap_or(b.checked_mul(3)?.min(240));
+
+    Some(())
 }
 
 fn main() {}

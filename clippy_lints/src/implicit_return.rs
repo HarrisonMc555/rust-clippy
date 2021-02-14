@@ -1,9 +1,11 @@
-use crate::utils::{in_macro_or_desugar, is_expn_of, snippet_opt, span_lint_and_then};
-use rustc::hir::{intravisit::FnKind, Body, ExprKind, FnDecl, HirId, MatchSource};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::{fn_has_unsatisfiable_preds, match_panic_def_id, snippet_opt, span_lint_and_then};
+use if_chain::if_chain;
 use rustc_errors::Applicability;
-use syntax::source_map::Span;
+use rustc_hir::intravisit::FnKind;
+use rustc_hir::{Body, Expr, ExprKind, FnDecl, HirId, MatchSource, StmtKind};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Span;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for missing return statements at the end of a block.
@@ -18,13 +20,13 @@ declare_clippy_lint! {
     ///
     /// **Example:**
     /// ```rust
-    /// fn foo(x: usize) {
+    /// fn foo(x: usize) -> usize {
     ///     x
     /// }
     /// ```
     /// add return
     /// ```rust
-    /// fn foo(x: usize) {
+    /// fn foo(x: usize) -> usize {
     ///     return x;
     /// }
     /// ```
@@ -35,91 +37,115 @@ declare_clippy_lint! {
 
 declare_lint_pass!(ImplicitReturn => [IMPLICIT_RETURN]);
 
-impl ImplicitReturn {
-    fn lint(cx: &LateContext<'_, '_>, outer_span: syntax_pos::Span, inner_span: syntax_pos::Span, msg: &str) {
-        span_lint_and_then(cx, IMPLICIT_RETURN, outer_span, "missing return statement", |db| {
-            if let Some(snippet) = snippet_opt(cx, inner_span) {
-                db.span_suggestion(
-                    outer_span,
-                    msg,
-                    format!("return {}", snippet),
-                    Applicability::MachineApplicable,
-                );
-            }
-        });
-    }
+static LINT_BREAK: &str = "change `break` to `return` as shown";
+static LINT_RETURN: &str = "add `return` as shown";
 
-    fn expr_match(cx: &LateContext<'_, '_>, expr: &rustc::hir::Expr) {
-        match &expr.node {
-            // loops could be using `break` instead of `return`
-            ExprKind::Block(block, ..) | ExprKind::Loop(block, ..) => {
-                if let Some(expr) = &block.expr {
-                    Self::expr_match(cx, expr);
-                }
-                // only needed in the case of `break` with `;` at the end
-                else if let Some(stmt) = block.stmts.last() {
-                    if let rustc::hir::StmtKind::Semi(expr, ..) = &stmt.node {
-                        // make sure it's a break, otherwise we want to skip
-                        if let ExprKind::Break(.., break_expr) = &expr.node {
-                            if let Some(break_expr) = break_expr {
-                                Self::lint(cx, expr.span, break_expr.span, "change `break` to `return` as shown");
-                            }
-                        }
-                    }
-                }
-            },
-            // use `return` instead of `break`
-            ExprKind::Break(.., break_expr) => {
-                if let Some(break_expr) = break_expr {
-                    Self::lint(cx, expr.span, break_expr.span, "change `break` to `return` as shown");
-                }
-            },
-            ExprKind::Match(.., arms, source) => {
-                let check_all_arms = match source {
-                    MatchSource::IfLetDesugar {
-                        contains_else_clause: has_else,
-                    } => *has_else,
-                    _ => true,
-                };
+fn lint(cx: &LateContext<'_>, outer_span: Span, inner_span: Span, msg: &str) {
+    let outer_span = outer_span.source_callsite();
+    let inner_span = inner_span.source_callsite();
 
-                if check_all_arms {
-                    for arm in arms {
-                        Self::expr_match(cx, &arm.body);
-                    }
-                } else {
-                    Self::expr_match(cx, &arms.first().expect("if let doesn't have a single arm").body);
-                }
-            },
-            // skip if it already has a return statement
-            ExprKind::Ret(..) => (),
-            // everything else is missing `return`
-            _ => {
-                // make sure it's not just an unreachable expression
-                if is_expn_of(expr.span, "unreachable").is_none() {
-                    Self::lint(cx, expr.span, expr.span, "add `return` as shown")
-                }
-            },
+    span_lint_and_then(cx, IMPLICIT_RETURN, outer_span, "missing `return` statement", |diag| {
+        if let Some(snippet) = snippet_opt(cx, inner_span) {
+            diag.span_suggestion(
+                outer_span,
+                msg,
+                format!("return {}", snippet),
+                Applicability::MachineApplicable,
+            );
         }
+    });
+}
+
+fn expr_match(cx: &LateContext<'_>, expr: &Expr<'_>) {
+    match expr.kind {
+        // loops could be using `break` instead of `return`
+        ExprKind::Block(block, ..) | ExprKind::Loop(block, ..) => {
+            if let Some(expr) = &block.expr {
+                expr_match(cx, expr);
+            }
+            // only needed in the case of `break` with `;` at the end
+            else if let Some(stmt) = block.stmts.last() {
+                if_chain! {
+                    if let StmtKind::Semi(expr, ..) = &stmt.kind;
+                    // make sure it's a break, otherwise we want to skip
+                    if let ExprKind::Break(.., Some(break_expr)) = &expr.kind;
+                    then {
+                            lint(cx, expr.span, break_expr.span, LINT_BREAK);
+                    }
+                }
+            }
+        },
+        // use `return` instead of `break`
+        ExprKind::Break(.., break_expr) => {
+            if let Some(break_expr) = break_expr {
+                lint(cx, expr.span, break_expr.span, LINT_BREAK);
+            }
+        },
+        ExprKind::If(.., if_expr, else_expr) => {
+            expr_match(cx, if_expr);
+
+            if let Some(else_expr) = else_expr {
+                expr_match(cx, else_expr);
+            }
+        },
+        ExprKind::Match(.., arms, source) => {
+            let check_all_arms = match source {
+                MatchSource::IfLetDesugar {
+                    contains_else_clause: has_else,
+                } => has_else,
+                _ => true,
+            };
+
+            if check_all_arms {
+                for arm in arms {
+                    expr_match(cx, &arm.body);
+                }
+            } else {
+                expr_match(cx, &arms.first().expect("`if let` doesn't have a single arm").body);
+            }
+        },
+        // skip if it already has a return statement
+        ExprKind::Ret(..) => (),
+        // make sure it's not a call that panics
+        ExprKind::Call(expr, ..) => {
+            if_chain! {
+                if let ExprKind::Path(qpath) = &expr.kind;
+                if let Some(path_def_id) = cx.qpath_res(qpath, expr.hir_id).opt_def_id();
+                if match_panic_def_id(cx, path_def_id);
+                then { }
+                else {
+                    lint(cx, expr.span, expr.span, LINT_RETURN)
+                }
+            }
+        },
+        // everything else is missing `return`
+        _ => lint(cx, expr.span, expr.span, LINT_RETURN),
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ImplicitReturn {
+impl<'tcx> LateLintPass<'tcx> for ImplicitReturn {
     fn check_fn(
         &mut self,
-        cx: &LateContext<'a, 'tcx>,
+        cx: &LateContext<'tcx>,
         _: FnKind<'tcx>,
-        _: &'tcx FnDecl,
-        body: &'tcx Body,
+        _: &'tcx FnDecl<'_>,
+        body: &'tcx Body<'_>,
         span: Span,
         _: HirId,
     ) {
         let def_id = cx.tcx.hir().body_owner_def_id(body.id());
-        let mir = cx.tcx.optimized_mir(def_id);
+
+        // Building MIR for `fn`s with unsatisfiable preds results in ICE.
+        if fn_has_unsatisfiable_preds(cx, def_id.to_def_id()) {
+            return;
+        }
+
+        let mir = cx.tcx.optimized_mir(def_id.to_def_id());
 
         // checking return type through MIR, HIR is not able to determine inferred closure return types
         // make sure it's not a macro
-        if !mir.return_ty().is_unit() && !in_macro_or_desugar(span) {
-            Self::expr_match(cx, &body.value);
+        if !mir.return_ty().is_unit() && !span.from_expansion() {
+            expr_match(cx, &body.value);
         }
     }
 }

@@ -1,8 +1,12 @@
+// does not test any rustfixable lints
+
 #[rustfmt::skip]
 #[warn(clippy::eq_op)]
 #[allow(clippy::identity_op, clippy::double_parens, clippy::many_single_char_names)]
 #[allow(clippy::no_effect, unused_variables, clippy::unnecessary_operation, clippy::short_circuit_statement)]
-#[warn(clippy::nonminimal_bool)]
+#[allow(clippy::nonminimal_bool)]
+#[allow(unused)]
+#[allow(clippy::unnecessary_cast)]
 fn main() {
     // simple values and comparisons
     1 == 1;
@@ -50,42 +54,6 @@ fn main() {
     2*a.len() == 2*a.len(); // ok, functions
     a.pop() == a.pop(); // ok, functions
 
-    use std::ops::BitAnd;
-    struct X(i32);
-    impl BitAnd for X {
-        type Output = X;
-        fn bitand(self, rhs: X) -> X {
-            X(self.0 & rhs.0)
-        }
-    }
-    impl<'a> BitAnd<&'a X> for X {
-        type Output = X;
-        fn bitand(self, rhs: &'a X) -> X {
-            X(self.0 & rhs.0)
-        }
-    }
-    let x = X(1);
-    let y = X(2);
-    let z = x & &y;
-
-    #[derive(Copy, Clone)]
-    struct Y(i32);
-    impl BitAnd for Y {
-        type Output = Y;
-        fn bitand(self, rhs: Y) -> Y {
-            Y(self.0 & rhs.0)
-        }
-    }
-    impl<'a> BitAnd<&'a Y> for Y {
-        type Output = Y;
-        fn bitand(self, rhs: &'a Y) -> Y {
-            Y(self.0 & rhs.0)
-        }
-    }
-    let x = Y(1);
-    let y = Y(2);
-    let z = x & &y;
-
     check_ignore_macro();
 
     // named constants
@@ -106,6 +74,24 @@ macro_rules! check_if_named_foo {
     )
 }
 
+macro_rules! bool_macro {
+    ($expression:expr) => {
+        true
+    };
+}
+
+#[allow(clippy::short_circuit_statement)]
 fn check_ignore_macro() {
     check_if_named_foo!(foo);
+    // checks if the lint ignores macros with `!` operator
+    !bool_macro!(1) && !bool_macro!("");
+}
+
+struct Nested {
+    inner: ((i32,), (i32,), (i32,)),
+}
+
+fn check_nested(n1: &Nested, n2: &Nested) -> bool {
+    // `n2.inner.0.0` mistyped as `n1.inner.0.0`
+    (n1.inner.0).0 == (n1.inner.0).0 && (n1.inner.1).0 == (n2.inner.1).0 && (n1.inner.2).0 == (n2.inner.2).0
 }

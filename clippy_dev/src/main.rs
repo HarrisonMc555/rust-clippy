@@ -1,178 +1,197 @@
-extern crate clap;
-extern crate clippy_dev;
-extern crate regex;
+#![cfg_attr(feature = "deny-warnings", deny(warnings))]
 
-use clap::{App, Arg, SubCommand};
-use clippy_dev::*;
-mod stderr_length_check;
+use clap::{App, Arg, ArgMatches, SubCommand};
+use clippy_dev::{bless, fmt, new_lint, ra_setup, serve, stderr_length_check, update_lints};
 
-#[derive(PartialEq)]
-enum UpdateMode {
-    Check,
-    Change,
-}
+#[cfg(feature = "lintcheck")]
+use clippy_dev::lintcheck;
 
 fn main() {
-    let matches = App::new("Clippy developer tooling")
+    let matches = get_clap_config();
+
+    match matches.subcommand() {
+        ("bless", Some(matches)) => {
+            bless::bless(matches.is_present("ignore-timestamp"));
+        },
+        #[cfg(feature = "lintcheck")]
+        ("lintcheck", Some(matches)) => {
+            lintcheck::run(&matches);
+        },
+        ("fmt", Some(matches)) => {
+            fmt::run(matches.is_present("check"), matches.is_present("verbose"));
+        },
+        ("update_lints", Some(matches)) => {
+            if matches.is_present("print-only") {
+                update_lints::print_lints();
+            } else if matches.is_present("check") {
+                update_lints::run(update_lints::UpdateMode::Check);
+            } else {
+                update_lints::run(update_lints::UpdateMode::Change);
+            }
+        },
+        ("new_lint", Some(matches)) => {
+            match new_lint::create(
+                matches.value_of("pass"),
+                matches.value_of("name"),
+                matches.value_of("category"),
+            ) {
+                Ok(_) => update_lints::run(update_lints::UpdateMode::Change),
+                Err(e) => eprintln!("Unable to create lint: {}", e),
+            }
+        },
+        ("limit_stderr_length", _) => {
+            stderr_length_check::check();
+        },
+        ("ra_setup", Some(matches)) => ra_setup::run(matches.value_of("rustc-repo-path")),
+        ("serve", Some(matches)) => {
+            let port = matches.value_of("port").unwrap().parse().unwrap();
+            let lint = matches.value_of("lint");
+            serve::run(port, lint);
+        },
+        _ => {},
+    }
+}
+
+fn get_clap_config<'a>() -> ArgMatches<'a> {
+    #[cfg(feature = "lintcheck")]
+    let lintcheck_sbcmd = SubCommand::with_name("lintcheck")
+        .about("run clippy on a set of crates and check output")
+        .arg(
+            Arg::with_name("only")
+                .takes_value(true)
+                .value_name("CRATE")
+                .long("only")
+                .help("only process a single crate of the list"),
+        )
+        .arg(
+            Arg::with_name("crates-toml")
+                .takes_value(true)
+                .value_name("CRATES-SOURCES-TOML-PATH")
+                .long("crates-toml")
+                .help("set the path for a crates.toml where lintcheck should read the sources from"),
+        );
+
+    let app = App::new("Clippy developer tooling")
+        .subcommand(
+            SubCommand::with_name("bless")
+                .about("bless the test output changes")
+                .arg(
+                    Arg::with_name("ignore-timestamp")
+                        .long("ignore-timestamp")
+                        .help("Include files updated before clippy was built"),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("fmt")
+                .about("Run rustfmt on all projects and tests")
+                .arg(
+                    Arg::with_name("check")
+                        .long("check")
+                        .help("Use the rustfmt --check option"),
+                )
+                .arg(
+                    Arg::with_name("verbose")
+                        .short("v")
+                        .long("verbose")
+                        .help("Echo commands run"),
+                ),
+        )
         .subcommand(
             SubCommand::with_name("update_lints")
                 .about("Updates lint registration and information from the source code")
                 .long_about(
                     "Makes sure that:\n \
-                     * the lint count in README.md is correct\n \
-                     * the changelog contains markdown link references at the bottom\n \
-                     * all lint groups include the correct lints\n \
-                     * lint modules in `clippy_lints/*` are visible in `src/lib.rs` via `pub mod`\n \
-                     * all lints are registered in the lint store",
+                 * the lint count in README.md is correct\n \
+                 * the changelog contains markdown link references at the bottom\n \
+                 * all lint groups include the correct lints\n \
+                 * lint modules in `clippy_lints/*` are visible in `src/lifb.rs` via `pub mod`\n \
+                 * all lints are registered in the lint store",
                 )
                 .arg(Arg::with_name("print-only").long("print-only").help(
                     "Print a table of lints to STDOUT. \
-                     This does not include deprecated and internal lints. \
-                     (Does not modify any files)",
+                 This does not include deprecated and internal lints. \
+                 (Does not modify any files)",
                 ))
                 .arg(
                     Arg::with_name("check")
                         .long("check")
-                        .help("Checks that util/dev update_lints has been run. Used on CI."),
+                        .help("Checks that `cargo dev update_lints` has been run. Used on CI."),
                 ),
         )
-        .arg(
-            Arg::with_name("limit-stderr-length")
-                .long("limit-stderr-length")
-                .help("Ensures that stderr files do not grow longer than a certain amount of lines."),
+        .subcommand(
+            SubCommand::with_name("new_lint")
+                .about("Create new lint and run `cargo dev update_lints`")
+                .arg(
+                    Arg::with_name("pass")
+                        .short("p")
+                        .long("pass")
+                        .help("Specify whether the lint runs during the early or late pass")
+                        .takes_value(true)
+                        .possible_values(&["early", "late"])
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("name")
+                        .short("n")
+                        .long("name")
+                        .help("Name of the new lint in snake case, ex: fn_too_long")
+                        .takes_value(true)
+                        .required(true),
+                )
+                .arg(
+                    Arg::with_name("category")
+                        .short("c")
+                        .long("category")
+                        .help("What category the lint belongs to")
+                        .default_value("nursery")
+                        .possible_values(&[
+                            "style",
+                            "correctness",
+                            "complexity",
+                            "perf",
+                            "pedantic",
+                            "restriction",
+                            "cargo",
+                            "nursery",
+                            "internal",
+                            "internal_warn",
+                        ])
+                        .takes_value(true),
+                ),
         )
-        .get_matches();
-
-    if matches.is_present("limit-stderr-length") {
-        stderr_length_check::check();
-    }
-    if let Some(matches) = matches.subcommand_matches("update_lints") {
-        if matches.is_present("print-only") {
-            print_lints();
-        } else if matches.is_present("check") {
-            update_lints(&UpdateMode::Check);
-        } else {
-            update_lints(&UpdateMode::Change);
-        }
-    }
-}
-
-fn print_lints() {
-    let lint_list = gather_all();
-    let usable_lints: Vec<Lint> = Lint::usable_lints(lint_list).collect();
-    let lint_count = usable_lints.len();
-    let grouped_by_lint_group = Lint::by_lint_group(&usable_lints);
-
-    for (lint_group, mut lints) in grouped_by_lint_group {
-        if lint_group == "Deprecated" {
-            continue;
-        }
-        println!("\n## {}", lint_group);
-
-        lints.sort_by_key(|l| l.name.clone());
-
-        for lint in lints {
-            println!(
-                "* [{}]({}#{}) ({})",
-                lint.name,
-                clippy_dev::DOCS_LINK.clone(),
-                lint.name,
-                lint.desc
-            );
-        }
-    }
-
-    println!("there are {} lints", lint_count);
-}
-
-fn update_lints(update_mode: &UpdateMode) {
-    let lint_list: Vec<Lint> = gather_all().collect();
-    let usable_lints: Vec<Lint> = Lint::usable_lints(lint_list.clone().into_iter()).collect();
-    let lint_count = usable_lints.len();
-
-    let mut file_change = replace_region_in_file(
-        "../README.md",
-        r#"\[There are \d+ lints included in this crate!\]\(https://rust-lang.github.io/rust-clippy/master/index.html\)"#,
-        "",
-        true,
-        update_mode == &UpdateMode::Change,
-        || {
-            vec![
-                format!("[There are {} lints included in this crate!](https://rust-lang.github.io/rust-clippy/master/index.html)", lint_count)
-            ]
-        }
-    ).changed;
-
-    file_change |= replace_region_in_file(
-        "../CHANGELOG.md",
-        "<!-- begin autogenerated links to lint list -->",
-        "<!-- end autogenerated links to lint list -->",
-        false,
-        update_mode == &UpdateMode::Change,
-        || gen_changelog_lint_list(lint_list.clone()),
-    )
-    .changed;
-
-    file_change |= replace_region_in_file(
-        "../clippy_lints/src/lib.rs",
-        "begin deprecated lints",
-        "end deprecated lints",
-        false,
-        update_mode == &UpdateMode::Change,
-        || gen_deprecated(&lint_list),
-    )
-    .changed;
-
-    file_change |= replace_region_in_file(
-        "../clippy_lints/src/lib.rs",
-        "begin lints modules",
-        "end lints modules",
-        false,
-        update_mode == &UpdateMode::Change,
-        || gen_modules_list(lint_list.clone()),
-    )
-    .changed;
-
-    // Generate lists of lints in the clippy::all lint group
-    file_change |= replace_region_in_file(
-        "../clippy_lints/src/lib.rs",
-        r#"reg.register_lint_group\("clippy::all""#,
-        r#"\]\);"#,
-        false,
-        update_mode == &UpdateMode::Change,
-        || {
-            // clippy::all should only include the following lint groups:
-            let all_group_lints = usable_lints
-                .clone()
-                .into_iter()
-                .filter(|l| {
-                    l.group == "correctness" || l.group == "style" || l.group == "complexity" || l.group == "perf"
-                })
-                .collect();
-
-            gen_lint_group_list(all_group_lints)
-        },
-    )
-    .changed;
-
-    // Generate the list of lints for all other lint groups
-    for (lint_group, lints) in Lint::by_lint_group(&usable_lints) {
-        file_change |= replace_region_in_file(
-            "../clippy_lints/src/lib.rs",
-            &format!("reg.register_lint_group\\(\"clippy::{}\"", lint_group),
-            r#"\]\);"#,
-            false,
-            update_mode == &UpdateMode::Change,
-            || gen_lint_group_list(lints.clone()),
+        .subcommand(
+            SubCommand::with_name("limit_stderr_length")
+                .about("Ensures that stderr files do not grow longer than a certain amount of lines."),
         )
-        .changed;
-    }
-
-    if update_mode == &UpdateMode::Check && file_change {
-        println!(
-            "Not all lints defined properly. \
-             Please run `util/dev update_lints` to make sure all lints are defined properly."
+        .subcommand(
+            SubCommand::with_name("ra_setup")
+                .about("Alter dependencies so rust-analyzer can find rustc internals")
+                .arg(
+                    Arg::with_name("rustc-repo-path")
+                        .long("repo-path")
+                        .short("r")
+                        .help("The path to a rustc repo that will be used for setting the dependencies")
+                        .takes_value(true)
+                        .value_name("path")
+                        .required(true),
+                ),
+        )
+        .subcommand(
+            SubCommand::with_name("serve")
+                .about("Launch a local 'ALL the Clippy Lints' website in a browser")
+                .arg(
+                    Arg::with_name("port")
+                        .long("port")
+                        .short("p")
+                        .help("Local port for the http server")
+                        .default_value("8000")
+                        .validator_os(serve::validate_port),
+                )
+                .arg(Arg::with_name("lint").help("Which lint's page to load initially (optional)")),
         );
-        std::process::exit(1);
-    }
+
+    #[cfg(feature = "lintcheck")]
+    let app = app.subcommand(lintcheck_sbcmd);
+
+    app.get_matches()
 }

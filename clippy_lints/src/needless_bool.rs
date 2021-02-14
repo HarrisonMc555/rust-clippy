@@ -3,33 +3,37 @@
 //! This lint is **warn** by default
 
 use crate::utils::sugg::Sugg;
-use crate::utils::{higher, in_macro_or_desugar, span_lint, span_lint_and_sugg};
-use rustc::hir::*;
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::{is_expn_of, parent_node_is_if_expr, snippet_with_applicability, span_lint, span_lint_and_sugg};
+use rustc_ast::ast::LitKind;
 use rustc_errors::Applicability;
-use syntax::ast::LitKind;
-use syntax::source_map::Spanned;
+use rustc_hir::{BinOpKind, Block, Expr, ExprKind, StmtKind, UnOp};
+use rustc_lint::{LateContext, LateLintPass};
+use rustc_session::{declare_lint_pass, declare_tool_lint};
+use rustc_span::source_map::Spanned;
+use rustc_span::Span;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for expressions of the form `if c { true } else {
-    /// false }`
-    /// (or vice versa) and suggest using the condition directly.
+    /// false }` (or vice versa) and suggests using the condition directly.
     ///
     /// **Why is this bad?** Redundant code.
     ///
     /// **Known problems:** Maybe false positives: Sometimes, the two branches are
-    /// painstakingly documented (which we of course do not detect), so they *may*
+    /// painstakingly documented (which we, of course, do not detect), so they *may*
     /// have some value. Even then, the documentation can be rewritten to match the
     /// shorter code.
     ///
     /// **Example:**
-    /// ```rust
+    /// ```rust,ignore
     /// if x {
     ///     false
     /// } else {
     ///     true
     /// }
+    /// ```
+    /// Could be written as
+    /// ```rust,ignore
+    /// !x
     /// ```
     pub NEEDLESS_BOOL,
     complexity,
@@ -46,8 +50,14 @@ declare_clippy_lint! {
     /// **Known problems:** None.
     ///
     /// **Example:**
-    /// ```rust
-    /// if x == true {} // could be `if x { }`
+    /// ```rust,ignore
+    /// if x == true {}
+    /// if y == false {}
+    /// ```
+    /// use `x` directly:
+    /// ```rust,ignore
+    /// if x {}
+    /// if !y {}
     /// ```
     pub BOOL_COMPARISON,
     complexity,
@@ -56,10 +66,10 @@ declare_clippy_lint! {
 
 declare_lint_pass!(NeedlessBool => [NEEDLESS_BOOL]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBool {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {
-        use self::Expression::*;
-        if let Some((ref pred, ref then_block, Some(ref else_expr))) = higher::if_block(&e) {
+impl<'tcx> LateLintPass<'tcx> for NeedlessBool {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, e: &'tcx Expr<'_>) {
+        use self::Expression::{Bool, RetBool};
+        if let ExprKind::If(ref pred, ref then_block, Some(ref else_expr)) = e.kind {
             let reduce = |ret, not| {
                 let mut applicability = Applicability::MachineApplicable;
                 let snip = Sugg::hir_with_applicability(cx, pred, "<predicate>", &mut applicability);
@@ -83,7 +93,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBool {
                     applicability,
                 );
             };
-            if let ExprKind::Block(ref then_block, _) = then_block.node {
+            if let ExprKind::Block(ref then_block, _) = then_block.kind {
                 match (fetch_bool_block(then_block), fetch_bool_expr(else_expr)) {
                     (RetBool(true), RetBool(true)) | (Bool(true), Bool(true)) => {
                         span_lint(
@@ -108,34 +118,21 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBool {
                     _ => (),
                 }
             } else {
-                panic!("IfExpr 'then' node is not an ExprKind::Block");
+                panic!("IfExpr `then` node is not an `ExprKind::Block`");
             }
         }
     }
 }
 
-fn parent_node_is_if_expr<'a, 'b>(expr: &Expr, cx: &LateContext<'a, 'b>) -> bool {
-    let parent_id = cx.tcx.hir().get_parent_node_by_hir_id(expr.hir_id);
-    let parent_node = cx.tcx.hir().get_by_hir_id(parent_id);
-
-    if let rustc::hir::Node::Expr(e) = parent_node {
-        if higher::if_block(&e).is_some() {
-            return true;
-        }
-    }
-
-    false
-}
-
 declare_lint_pass!(BoolComparison => [BOOL_COMPARISON]);
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BoolComparison {
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, e: &'tcx Expr) {
-        if in_macro_or_desugar(e.span) {
+impl<'tcx> LateLintPass<'tcx> for BoolComparison {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, e: &'tcx Expr<'_>) {
+        if e.span.from_expansion() {
             return;
         }
 
-        if let ExprKind::Binary(Spanned { node, .. }, ..) = e.node {
+        if let ExprKind::Binary(Spanned { node, .. }, ..) = e.kind {
             let ignore_case = None::<(fn(_) -> _, &str)>;
             let ignore_no_literal = None::<(fn(_, _) -> _, &str)>;
             match node {
@@ -191,21 +188,71 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for BoolComparison {
     }
 }
 
+struct ExpressionInfoWithSpan {
+    one_side_is_unary_not: bool,
+    left_span: Span,
+    right_span: Span,
+}
+
+fn is_unary_not(e: &Expr<'_>) -> (bool, Span) {
+    if let ExprKind::Unary(UnOp::Not, operand) = e.kind {
+        return (true, operand.span);
+    }
+    (false, e.span)
+}
+
+fn one_side_is_unary_not<'tcx>(left_side: &'tcx Expr<'_>, right_side: &'tcx Expr<'_>) -> ExpressionInfoWithSpan {
+    let left = is_unary_not(left_side);
+    let right = is_unary_not(right_side);
+
+    ExpressionInfoWithSpan {
+        one_side_is_unary_not: left.0 != right.0,
+        left_span: left.1,
+        right_span: right.1,
+    }
+}
+
 fn check_comparison<'a, 'tcx>(
-    cx: &LateContext<'a, 'tcx>,
-    e: &'tcx Expr,
+    cx: &LateContext<'tcx>,
+    e: &'tcx Expr<'_>,
     left_true: Option<(impl FnOnce(Sugg<'a>) -> Sugg<'a>, &str)>,
     left_false: Option<(impl FnOnce(Sugg<'a>) -> Sugg<'a>, &str)>,
     right_true: Option<(impl FnOnce(Sugg<'a>) -> Sugg<'a>, &str)>,
     right_false: Option<(impl FnOnce(Sugg<'a>) -> Sugg<'a>, &str)>,
     no_literal: Option<(impl FnOnce(Sugg<'a>, Sugg<'a>) -> Sugg<'a>, &str)>,
 ) {
-    use self::Expression::*;
+    use self::Expression::{Bool, Other};
 
-    if let ExprKind::Binary(_, ref left_side, ref right_side) = e.node {
-        let (l_ty, r_ty) = (cx.tables.expr_ty(left_side), cx.tables.expr_ty(right_side));
+    if let ExprKind::Binary(op, ref left_side, ref right_side) = e.kind {
+        let (l_ty, r_ty) = (
+            cx.typeck_results().expr_ty(left_side),
+            cx.typeck_results().expr_ty(right_side),
+        );
+        if is_expn_of(left_side.span, "cfg").is_some() || is_expn_of(right_side.span, "cfg").is_some() {
+            return;
+        }
         if l_ty.is_bool() && r_ty.is_bool() {
             let mut applicability = Applicability::MachineApplicable;
+
+            if let BinOpKind::Eq = op.node {
+                let expression_info = one_side_is_unary_not(&left_side, &right_side);
+                if expression_info.one_side_is_unary_not {
+                    span_lint_and_sugg(
+                        cx,
+                        BOOL_COMPARISON,
+                        e.span,
+                        "this comparison might be written more concisely",
+                        "try simplifying it as shown",
+                        format!(
+                            "{} != {}",
+                            snippet_with_applicability(cx, expression_info.left_span, "..", &mut applicability),
+                            snippet_with_applicability(cx, expression_info.right_span, "..", &mut applicability)
+                        ),
+                        applicability,
+                    )
+                }
+            }
+
             match (fetch_bool_expr(left_side), fetch_bool_expr(right_side)) {
                 (Bool(true), Other) => left_true.map_or((), |(h, m)| {
                     suggest_bool_comparison(cx, e, right_side, applicability, m, h)
@@ -239,14 +286,21 @@ fn check_comparison<'a, 'tcx>(
 }
 
 fn suggest_bool_comparison<'a, 'tcx>(
-    cx: &LateContext<'a, 'tcx>,
-    e: &'tcx Expr,
-    expr: &Expr,
+    cx: &LateContext<'tcx>,
+    e: &'tcx Expr<'_>,
+    expr: &Expr<'_>,
     mut applicability: Applicability,
     message: &str,
     conv_hint: impl FnOnce(Sugg<'a>) -> Sugg<'a>,
 ) {
-    let hint = Sugg::hir_with_applicability(cx, expr, "..", &mut applicability);
+    let hint = if expr.span.from_expansion() {
+        if applicability != Applicability::Unspecified {
+            applicability = Applicability::MaybeIncorrect;
+        }
+        Sugg::hir_with_macro_callsite(cx, expr, "..")
+    } else {
+        Sugg::hir_with_applicability(cx, expr, "..", &mut applicability)
+    };
     span_lint_and_sugg(
         cx,
         BOOL_COMPARISON,
@@ -264,12 +318,12 @@ enum Expression {
     Other,
 }
 
-fn fetch_bool_block(block: &Block) -> Expression {
+fn fetch_bool_block(block: &Block<'_>) -> Expression {
     match (&*block.stmts, block.expr.as_ref()) {
         (&[], Some(e)) => fetch_bool_expr(&**e),
         (&[ref e], None) => {
-            if let StmtKind::Semi(ref e) = e.node {
-                if let ExprKind::Ret(_) = e.node {
+            if let StmtKind::Semi(ref e) = e.kind {
+                if let ExprKind::Ret(_) = e.kind {
                     fetch_bool_expr(&**e)
                 } else {
                     Expression::Other
@@ -282,8 +336,8 @@ fn fetch_bool_block(block: &Block) -> Expression {
     }
 }
 
-fn fetch_bool_expr(expr: &Expr) -> Expression {
-    match expr.node {
+fn fetch_bool_expr(expr: &Expr<'_>) -> Expression {
+    match expr.kind {
         ExprKind::Block(ref block, _) => fetch_bool_block(block),
         ExprKind::Lit(ref lit_ptr) => {
             if let LitKind::Bool(value) = lit_ptr.node {

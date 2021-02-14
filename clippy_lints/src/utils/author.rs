@@ -1,21 +1,23 @@
 //! A group of attributes that can be attached to Rust code in order
 //! to generate a clippy lint detecting said code automatically.
 
-use crate::utils::{get_attr, higher};
-use rustc::hir;
-use rustc::hir::intravisit::{NestedVisitorMap, Visitor};
-use rustc::hir::{BindingAnnotation, Expr, ExprKind, Pat, PatKind, QPath, Stmt, StmtKind, TyKind};
-use rustc::lint::{LateContext, LateLintPass, LintArray, LintContext, LintPass};
-use rustc::session::Session;
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::get_attr;
+use rustc_ast::ast::{Attribute, LitFloatType, LitKind};
+use rustc_ast::walk_list;
 use rustc_data_structures::fx::FxHashMap;
-use syntax::ast::{Attribute, LitKind};
+use rustc_hir as hir;
+use rustc_hir::intravisit::{NestedVisitorMap, Visitor};
+use rustc_hir::{BindingAnnotation, Block, Expr, ExprKind, Pat, PatKind, QPath, Stmt, StmtKind, TyKind};
+use rustc_lint::{LateContext, LateLintPass, LintContext};
+use rustc_middle::hir::map::Map;
+use rustc_session::Session;
+use rustc_session::{declare_lint_pass, declare_tool_lint};
 
 declare_clippy_lint! {
     /// **What it does:** Generates clippy code that detects the offending pattern
     ///
     /// **Example:**
-    /// ```rust
+    /// ```rust,ignore
     /// // ./tests/ui/my_lint.rs
     /// fn foo() {
     ///     // detect the following pattern
@@ -24,19 +26,20 @@ declare_clippy_lint! {
     ///         // but ignore everything from here on
     ///         #![clippy::author = "ignore"]
     ///     }
+    ///     ()
     /// }
     /// ```
     ///
     /// Running `TESTNAME=ui/my_lint cargo uitest` will produce
     /// a `./tests/ui/new_lint.stdout` file with the generated code:
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// // ./tests/ui/new_lint.stdout
     /// if_chain! {
-    ///     if let ExprKind::If(ref cond, ref then, None) = item.node,
-    ///     if let ExprKind::Binary(BinOp::Eq, ref left, ref right) = cond.node,
-    ///     if let ExprKind::Path(ref path) = left.node,
-    ///     if let ExprKind::Lit(ref lit) = right.node,
+    ///     if let ExprKind::If(ref cond, ref then, None) = item.kind,
+    ///     if let ExprKind::Binary(BinOp::Eq, ref left, ref right) = cond.kind,
+    ///     if let ExprKind::Path(ref path) = left.kind,
+    ///     if let ExprKind::Lit(ref lit) = right.kind,
     ///     if let LitKind::Int(42, _) = lit.node,
     ///     then {
     ///         // report your lint here
@@ -61,8 +64,8 @@ fn done() {
     println!("}}");
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
-    fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::Item) {
+impl<'tcx> LateLintPass<'tcx> for Author {
+    fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx hir::Item<'_>) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
         }
@@ -71,7 +74,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_impl_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::ImplItem) {
+    fn check_impl_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx hir::ImplItem<'_>) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
         }
@@ -80,7 +83,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_trait_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::TraitItem) {
+    fn check_trait_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx hir::TraitItem<'_>) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
         }
@@ -89,16 +92,17 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_variant(&mut self, cx: &LateContext<'a, 'tcx>, var: &'tcx hir::Variant, generics: &hir::Generics) {
-        if !has_attr(cx.sess(), &var.node.attrs) {
+    fn check_variant(&mut self, cx: &LateContext<'tcx>, var: &'tcx hir::Variant<'_>) {
+        if !has_attr(cx.sess(), &var.attrs) {
             return;
         }
         prelude();
-        PrintVisitor::new("var").visit_variant(var, generics, hir::DUMMY_HIR_ID);
+        let parent_hir_id = cx.tcx.hir().get_parent_node(var.id);
+        PrintVisitor::new("var").visit_variant(var, &hir::Generics::empty(), parent_hir_id);
         done();
     }
 
-    fn check_struct_field(&mut self, cx: &LateContext<'a, 'tcx>, field: &'tcx hir::StructField) {
+    fn check_struct_field(&mut self, cx: &LateContext<'tcx>, field: &'tcx hir::StructField<'_>) {
         if !has_attr(cx.sess(), &field.attrs) {
             return;
         }
@@ -107,7 +111,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx hir::Expr) {
+    fn check_expr(&mut self, cx: &LateContext<'tcx>, expr: &'tcx hir::Expr<'_>) {
         if !has_attr(cx.sess(), &expr.attrs) {
             return;
         }
@@ -116,7 +120,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_arm(&mut self, cx: &LateContext<'a, 'tcx>, arm: &'tcx hir::Arm) {
+    fn check_arm(&mut self, cx: &LateContext<'tcx>, arm: &'tcx hir::Arm<'_>) {
         if !has_attr(cx.sess(), &arm.attrs) {
             return;
         }
@@ -125,8 +129,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, stmt: &'tcx hir::Stmt) {
-        if !has_attr(cx.sess(), stmt.node.attrs()) {
+    fn check_stmt(&mut self, cx: &LateContext<'tcx>, stmt: &'tcx hir::Stmt<'_>) {
+        if !has_attr(cx.sess(), stmt.kind.attrs(|id| cx.tcx.hir().item(id.id))) {
             return;
         }
         prelude();
@@ -134,7 +138,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
         done();
     }
 
-    fn check_foreign_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx hir::ForeignItem) {
+    fn check_foreign_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx hir::ForeignItem<'_>) {
         if !has_attr(cx.sess(), &item.attrs) {
             return;
         }
@@ -145,6 +149,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Author {
 }
 
 impl PrintVisitor {
+    #[must_use]
     fn new(s: &'static str) -> Self {
         Self {
             ids: FxHashMap::default(),
@@ -153,7 +158,7 @@ impl PrintVisitor {
     }
 
     fn next(&mut self, s: &'static str) -> String {
-        use std::collections::hash_map::Entry::*;
+        use std::collections::hash_map::Entry::{Occupied, Vacant};
         match self.ids.entry(s) {
             // already there: start numbering from `1`
             Occupied(mut occ) => {
@@ -169,10 +174,17 @@ impl PrintVisitor {
         }
     }
 
-    fn print_qpath(&mut self, path: &QPath) {
-        print!("    if match_qpath({}, &[", self.current);
-        print_path(path, &mut true);
-        println!("]);");
+    fn print_qpath(&mut self, path: &QPath<'_>) {
+        if let QPath::LangItem(lang_item, _) = *path {
+            println!(
+                "    if matches!({}, QPath::LangItem(LangItem::{:?}, _));",
+                self.current, lang_item,
+            );
+        } else {
+            print!("    if match_qpath({}, &[", self.current);
+            print_path(path, &mut true);
+            println!("]);");
+        }
     }
 }
 
@@ -185,37 +197,13 @@ struct PrintVisitor {
 }
 
 impl<'tcx> Visitor<'tcx> for PrintVisitor {
-    #[allow(clippy::too_many_lines)]
-    fn visit_expr(&mut self, expr: &Expr) {
-        // handle if desugarings
-        // TODO add more desugarings here
-        if let Some((cond, then, opt_else)) = higher::if_block(&expr) {
-            let cond_pat = self.next("cond");
-            let then_pat = self.next("then");
-            if let Some(else_) = opt_else {
-                let else_pat = self.next("else_");
-                println!(
-                    "    if let Some((ref {}, ref {}, Some({}))) = higher::if_block(&{});",
-                    cond_pat, then_pat, else_pat, self.current
-                );
-                self.current = else_pat;
-                self.visit_expr(else_);
-            } else {
-                println!(
-                    "    if let Some((ref {}, ref {}, None)) = higher::if_block(&{});",
-                    cond_pat, then_pat, self.current
-                );
-            }
-            self.current = cond_pat;
-            self.visit_expr(cond);
-            self.current = then_pat;
-            self.visit_expr(then);
-            return;
-        }
+    type Map = Map<'tcx>;
 
+    #[allow(clippy::too_many_lines)]
+    fn visit_expr(&mut self, expr: &Expr<'_>) {
         print!("    if let ExprKind::");
-        let current = format!("{}.node", self.current);
-        match expr.node {
+        let current = format!("{}.kind", self.current);
+        match expr.kind {
             ExprKind::Box(ref inner) => {
                 let inner_pat = self.next("inner");
                 println!("Box(ref {}) = {};", inner_pat, current);
@@ -243,8 +231,11 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                     self.visit_expr(arg);
                 }
             },
-            ExprKind::MethodCall(ref _method_name, ref _generics, ref _args) => {
-                println!("MethodCall(ref method_name, ref generics, ref args) = {};", current);
+            ExprKind::MethodCall(ref _method_name, ref _generics, ref _args, ref _fn_span) => {
+                println!(
+                    "MethodCall(ref method_name, ref generics, ref args, ref fn_span) = {};",
+                    current
+                );
                 println!("    // unimplemented: `ExprKind::MethodCall` is not further destructured at the moment");
             },
             ExprKind::Tup(ref elements) => {
@@ -286,10 +277,14 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                     LitKind::Byte(b) => println!("    if let LitKind::Byte({}) = {}.node;", b, lit_pat),
                     // FIXME: also check int type
                     LitKind::Int(i, _) => println!("    if let LitKind::Int({}, _) = {}.node;", i, lit_pat),
-                    LitKind::Float(..) => println!("    if let LitKind::Float(..) = {}.node;", lit_pat),
-                    LitKind::FloatUnsuffixed(_) => {
-                        println!("    if let LitKind::FloatUnsuffixed(_) = {}.node;", lit_pat)
-                    },
+                    LitKind::Float(_, LitFloatType::Suffixed(_)) => println!(
+                        "    if let LitKind::Float(_, LitFloatType::Suffixed(_)) = {}.node;",
+                        lit_pat
+                    ),
+                    LitKind::Float(_, LitFloatType::Unsuffixed) => println!(
+                        "    if let LitKind::Float(_, LitFloatType::Unsuffixed) = {}.node;",
+                        lit_pat
+                    ),
                     LitKind::ByteStr(ref vec) => {
                         let vec_pat = self.next("vec");
                         println!("    if let LitKind::ByteStr(ref {}) = {}.node;", vec_pat, lit_pat);
@@ -297,7 +292,7 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                     },
                     LitKind::Str(ref text, _) => {
                         let str_pat = self.next("s");
-                        println!("    if let LitKind::Str(ref {}) = {}.node;", str_pat, lit_pat);
+                        println!("    if let LitKind::Str(ref {}, _) = {}.node;", str_pat, lit_pat);
                         println!("    if {}.as_str() == {:?}", str_pat, &*text.as_str())
                     },
                 }
@@ -308,8 +303,8 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 let qp_label = self.next("qp");
 
                 println!("Cast(ref {}, ref {}) = {};", cast_pat, cast_ty, current);
-                if let TyKind::Path(ref qp) = ty.node {
-                    println!("    if let TyKind::Path(ref {}) = {}.node;", qp_label, cast_ty);
+                if let TyKind::Path(ref qp) = ty.kind {
+                    println!("    if let TyKind::Path(ref {}) = {}.kind;", qp_label, cast_ty);
                     self.current = qp_label;
                     self.print_qpath(qp);
                 }
@@ -322,26 +317,32 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.current = cast_pat;
                 self.visit_expr(expr);
             },
-            ExprKind::While(ref cond, ref body, _) => {
-                let cond_pat = self.next("cond");
-                let body_pat = self.next("body");
-                let label_pat = self.next("label");
-                println!(
-                    "While(ref {}, ref {}, ref {}) = {};",
-                    cond_pat, body_pat, label_pat, current
-                );
-                self.current = cond_pat;
-                self.visit_expr(cond);
-                self.current = body_pat;
-                self.visit_block(body);
-            },
-            ExprKind::Loop(ref body, _, desugaring) => {
+            ExprKind::Loop(ref body, _, desugaring, _) => {
                 let body_pat = self.next("body");
                 let des = loop_desugaring_name(desugaring);
                 let label_pat = self.next("label");
                 println!("Loop(ref {}, ref {}, {}) = {};", body_pat, label_pat, des, current);
                 self.current = body_pat;
                 self.visit_block(body);
+            },
+            ExprKind::If(ref cond, ref then, ref opt_else) => {
+                let cond_pat = self.next("cond");
+                let then_pat = self.next("then");
+                if let Some(ref else_) = *opt_else {
+                    let else_pat = self.next("else_");
+                    println!(
+                        "If(ref {}, ref {}, Some(ref {})) = {};",
+                        cond_pat, then_pat, else_pat, current
+                    );
+                    self.current = else_pat;
+                    self.visit_expr(else_);
+                } else {
+                    println!("If(ref {}, ref {}, None) = {};", cond_pat, then_pat, current);
+                }
+                self.current = cond_pat;
+                self.visit_expr(cond);
+                self.current = then_pat;
+                self.visit_expr(then);
             },
             ExprKind::Match(ref expr, ref arms, desugaring) => {
                 let des = desugaring_name(desugaring);
@@ -364,20 +365,29 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                                 self.current = if_expr_pat;
                                 self.visit_expr(if_expr);
                             },
+                            hir::Guard::IfLet(ref if_let_pat, ref if_let_expr) => {
+                                let if_let_pat_pat = self.next("pat");
+                                let if_let_expr_pat = self.next("expr");
+                                println!(
+                                    "    if let Guard::IfLet(ref {}, ref {}) = {};",
+                                    if_let_pat_pat, if_let_expr_pat, guard_pat
+                                );
+                                self.current = if_let_expr_pat;
+                                self.visit_expr(if_let_expr);
+                                self.current = if_let_pat_pat;
+                                self.visit_pat(if_let_pat);
+                            },
                         }
                     }
-                    println!("    if {}[{}].pats.len() == {};", arms_pat, i, arm.pats.len());
-                    for (j, pat) in arm.pats.iter().enumerate() {
-                        self.current = format!("{}[{}].pats[{}]", arms_pat, i, j);
-                        self.visit_pat(pat);
-                    }
+                    self.current = format!("{}[{}].pat", arms_pat, i);
+                    self.visit_pat(&arm.pat);
                 }
             },
             ExprKind::Closure(ref _capture_clause, ref _func, _, _, _) => {
                 println!("Closure(ref capture_clause, ref func, _, _, _) = {};", current);
                 println!("    // unimplemented: `ExprKind::Closure` is not further destructured at the moment");
             },
-            ExprKind::Yield(ref sub) => {
+            ExprKind::Yield(ref sub, _) => {
                 let sub_pat = self.next("sub");
                 println!("Yield(ref sub) = {};", current);
                 self.current = sub_pat;
@@ -389,10 +399,13 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.current = block_pat;
                 self.visit_block(block);
             },
-            ExprKind::Assign(ref target, ref value) => {
+            ExprKind::Assign(ref target, ref value, _) => {
                 let target_pat = self.next("target");
                 let value_pat = self.next("value");
-                println!("Assign(ref {}, ref {}) = {};", target_pat, value_pat, current);
+                println!(
+                    "Assign(ref {}, ref {}, ref _span) = {};",
+                    target_pat, value_pat, current
+                );
                 self.current = target_pat;
                 self.visit_expr(target);
                 self.current = value_pat;
@@ -416,7 +429,7 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 let obj_pat = self.next("object");
                 let field_name_pat = self.next("field_name");
                 println!("Field(ref {}, ref {}) = {};", obj_pat, field_name_pat, current);
-                println!("    if {}.node.as_str() == {:?}", field_name_pat, field_ident.as_str());
+                println!("    if {}.as_str() == {:?}", field_name_pat, field_ident.as_str());
                 self.current = obj_pat;
                 self.visit_expr(object);
             },
@@ -435,9 +448,12 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.current = path_pat;
                 self.print_qpath(path);
             },
-            ExprKind::AddrOf(mutability, ref inner) => {
+            ExprKind::AddrOf(kind, mutability, ref inner) => {
                 let inner_pat = self.next("inner");
-                println!("AddrOf({:?}, ref {}) = {};", mutability, inner_pat, current);
+                println!(
+                    "AddrOf(BorrowKind::{:?}, Mutability::{:?}, ref {}) = {};",
+                    kind, mutability, inner_pat, current
+                );
                 self.current = inner_pat;
                 self.visit_expr(inner);
             },
@@ -468,9 +484,13 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                     println!("Ret(None) = {};", current);
                 }
             },
-            ExprKind::InlineAsm(_, ref _input, ref _output) => {
-                println!("InlineAsm(_, ref input, ref output) = {};", current);
+            ExprKind::InlineAsm(_) => {
+                println!("InlineAsm(_) = {};", current);
                 println!("    // unimplemented: `ExprKind::InlineAsm` is not further destructured at the moment");
+            },
+            ExprKind::LlvmInlineAsm(_) => {
+                println!("LlvmInlineAsm(_) = {};", current);
+                println!("    // unimplemented: `ExprKind::LlvmInlineAsm` is not further destructured at the moment");
             },
             ExprKind::Struct(ref path, ref fields, ref opt_base) => {
                 let path_pat = self.next("path");
@@ -490,6 +510,11 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.print_qpath(path);
                 println!("    if {}.len() == {};", fields_pat, fields.len());
                 println!("    // unimplemented: field checks");
+            },
+            ExprKind::ConstBlock(_) => {
+                let value_pat = self.next("value");
+                println!("Const({})", value_pat);
+                self.current = value_pat;
             },
             // FIXME: compute length (needs type info)
             ExprKind::Repeat(ref value, _) => {
@@ -511,11 +536,22 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
         }
     }
 
+    fn visit_block(&mut self, block: &Block<'_>) {
+        let trailing_pat = self.next("trailing_expr");
+        println!("    if let Some({}) = &{}.expr;", trailing_pat, self.current);
+        println!("    if {}.stmts.len() == {};", self.current, block.stmts.len());
+        let current = self.current.clone();
+        for (i, stmt) in block.stmts.iter().enumerate() {
+            self.current = format!("{}.stmts[{}]", current, i);
+            self.visit_stmt(stmt);
+        }
+    }
+
     #[allow(clippy::too_many_lines)]
-    fn visit_pat(&mut self, pat: &Pat) {
+    fn visit_pat(&mut self, pat: &Pat<'_>) {
         print!("    if let PatKind::");
-        let current = format!("{}.node", self.current);
-        match pat.node {
+        let current = format!("{}.kind", self.current);
+        match pat.kind {
             PatKind::Wild => println!("Wild = {};", current),
             PatKind::Binding(anno, .., ident, ref sub) => {
                 let anno_pat = match anno {
@@ -536,7 +572,7 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 } else {
                     println!("Binding({}, _, {}, None) = {};", anno_pat, name_pat, current);
                 }
-                println!("    if {}.node.as_str() == \"{}\";", name_pat, ident.as_str());
+                println!("    if {}.as_str() == \"{}\";", name_pat, ident.as_str());
             },
             PatKind::Struct(ref path, ref fields, ignore) => {
                 let path_pat = self.next("path");
@@ -547,6 +583,12 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 );
                 self.current = path_pat;
                 self.print_qpath(path);
+                println!("    if {}.len() == {};", fields_pat, fields.len());
+                println!("    // unimplemented: field checks");
+            },
+            PatKind::Or(ref fields) => {
+                let fields_pat = self.next("fields");
+                println!("Or(ref {}) = {};", fields_pat, current);
                 println!("    if {}.len() == {};", fields_pat, fields.len());
                 println!("    // unimplemented: field checks");
             },
@@ -600,9 +642,9 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                     start_pat, end_pat, end_kind, current
                 );
                 self.current = start_pat;
-                self.visit_expr(start);
+                walk_list!(self, visit_expr, start);
                 self.current = end_pat;
-                self.visit_expr(end);
+                walk_list!(self, visit_expr, end);
             },
             PatKind::Slice(ref start, ref middle, ref end) => {
                 let start_pat = self.next("start");
@@ -632,10 +674,10 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
         }
     }
 
-    fn visit_stmt(&mut self, s: &Stmt) {
+    fn visit_stmt(&mut self, s: &Stmt<'_>) {
         print!("    if let StmtKind::");
-        let current = format!("{}.node", self.current);
-        match s.node {
+        let current = format!("{}.kind", self.current);
+        match s.kind {
             // A local (let) binding:
             StmtKind::Local(ref local) => {
                 let local_pat = self.next("local");
@@ -672,7 +714,7 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
         }
     }
 
-    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
+    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
         NestedVisitorMap::None
     }
 }
@@ -681,36 +723,37 @@ fn has_attr(sess: &Session, attrs: &[Attribute]) -> bool {
     get_attr(sess, attrs, "author").count() > 0
 }
 
+#[must_use]
 fn desugaring_name(des: hir::MatchSource) -> String {
     match des {
         hir::MatchSource::ForLoopDesugar => "MatchSource::ForLoopDesugar".to_string(),
         hir::MatchSource::TryDesugar => "MatchSource::TryDesugar".to_string(),
+        hir::MatchSource::WhileDesugar => "MatchSource::WhileDesugar".to_string(),
         hir::MatchSource::WhileLetDesugar => "MatchSource::WhileLetDesugar".to_string(),
         hir::MatchSource::Normal => "MatchSource::Normal".to_string(),
         hir::MatchSource::IfLetDesugar { contains_else_clause } => format!(
             "MatchSource::IfLetDesugar {{ contains_else_clause: {} }}",
             contains_else_clause
         ),
-        hir::MatchSource::IfDesugar { contains_else_clause } => format!(
-            "MatchSource::IfDesugar {{ contains_else_clause: {} }}",
-            contains_else_clause
-        ),
+        hir::MatchSource::IfLetGuardDesugar => "MatchSource::IfLetGuardDesugar".to_string(),
         hir::MatchSource::AwaitDesugar => "MatchSource::AwaitDesugar".to_string(),
     }
 }
 
+#[must_use]
 fn loop_desugaring_name(des: hir::LoopSource) -> &'static str {
     match des {
         hir::LoopSource::ForLoop => "LoopSource::ForLoop",
         hir::LoopSource::Loop => "LoopSource::Loop",
+        hir::LoopSource::While => "LoopSource::While",
         hir::LoopSource::WhileLet => "LoopSource::WhileLet",
     }
 }
 
-fn print_path(path: &QPath, first: &mut bool) {
+fn print_path(path: &QPath<'_>, first: &mut bool) {
     match *path {
         QPath::Resolved(_, ref path) => {
-            for segment in &path.segments {
+            for segment in path.segments {
                 if *first {
                     *first = false;
                 } else {
@@ -719,7 +762,7 @@ fn print_path(path: &QPath, first: &mut bool) {
                 print!("{:?}", segment.ident.as_str());
             }
         },
-        QPath::TypeRelative(ref ty, ref segment) => match ty.node {
+        QPath::TypeRelative(ref ty, ref segment) => match ty.kind {
             hir::TyKind::Path(ref inner_path) => {
                 print_path(inner_path, first);
                 if *first {
@@ -731,5 +774,6 @@ fn print_path(path: &QPath, first: &mut bool) {
             },
             ref other => print!("/* unimplemented: {:?}*/", other),
         },
+        QPath::LangItem(..) => panic!("print_path: called for lang item qpath"),
     }
 }

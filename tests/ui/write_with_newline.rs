@@ -1,3 +1,6 @@
+// FIXME: Ideally these suggestions would be fixed via rustfix. Blocked by rust-lang/rust#53934
+// // run-rustfix
+
 #![allow(clippy::write_literal)]
 #![warn(clippy::write_with_newline)]
 
@@ -11,6 +14,7 @@ fn main() {
     write!(&mut v, "Hello {}\n", "world");
     write!(&mut v, "Hello {} {}\n", "world", "#2");
     write!(&mut v, "{}\n", 1265);
+    write!(&mut v, "\n");
 
     // These should be fine
     write!(&mut v, "");
@@ -46,4 +50,10 @@ fn main() {
         r"
 "
     );
+
+    // Don't warn on CRLF (#4208)
+    write!(&mut v, "\r\n");
+    write!(&mut v, "foo\r\n");
+    write!(&mut v, "\\r\n"); //~ ERROR
+    write!(&mut v, "foo\rbar\n");
 }

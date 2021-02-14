@@ -1,16 +1,23 @@
+use crate::utils::{in_macro, meets_msrv, snippet_opt, span_lint_and_sugg};
 use if_chain::if_chain;
-use rustc::hir;
-use rustc::hir::def::{CtorKind, DefKind, Res};
-use rustc::hir::intravisit::{walk_item, walk_path, walk_ty, NestedVisitorMap, Visitor};
-use rustc::hir::*;
-use rustc::lint::{in_external_macro, LateContext, LateLintPass, LintArray, LintContext, LintPass};
-use rustc::ty;
-use rustc::ty::{DefIdTree, Ty};
-use rustc::{declare_lint_pass, declare_tool_lint};
-use rustc_errors::Applicability;
-use syntax_pos::symbol::kw;
 
-use crate::utils::span_lint_and_sugg;
+use rustc_errors::Applicability;
+use rustc_hir as hir;
+use rustc_hir::def::DefKind;
+use rustc_hir::{
+    def,
+    def_id::LocalDefId,
+    intravisit::{walk_ty, NestedVisitorMap, Visitor},
+    Expr, ExprKind, FnRetTy, FnSig, GenericArg, HirId, Impl, ImplItemKind, Item, ItemKind, Node, Path, PathSegment,
+    QPath, TyKind,
+};
+use rustc_lint::{LateContext, LateLintPass, LintContext};
+use rustc_middle::hir::map::Map;
+use rustc_middle::ty::{AssocKind, Ty, TyS};
+use rustc_semver::RustcVersion;
+use rustc_session::{declare_tool_lint, impl_lint_pass};
+use rustc_span::{BytePos, Span};
+use rustc_typeck::hir_ty_to_ty;
 
 declare_clippy_lint! {
     /// **What it does:** Checks for unnecessary repetition of structure name when a
@@ -21,10 +28,11 @@ declare_clippy_lint! {
     /// feels inconsistent.
     ///
     /// **Known problems:**
-    /// - False positive when using associated types (#2843)
-    /// - False positives in some situations when using generics (#3410)
+    /// - Unaddressed false negative in fn bodies of trait implementations
+    /// - False positive with assotiated types in traits (#4140)
     ///
     /// **Example:**
+    ///
     /// ```rust
     /// struct Foo {}
     /// impl Foo {
@@ -43,20 +51,342 @@ declare_clippy_lint! {
     /// }
     /// ```
     pub USE_SELF,
-    pedantic,
-    "Unnecessary structure name repetition whereas `Self` is applicable"
+    nursery,
+    "unnecessary structure name repetition whereas `Self` is applicable"
 }
 
-declare_lint_pass!(UseSelf => [USE_SELF]);
+#[derive(Default)]
+pub struct UseSelf {
+    msrv: Option<RustcVersion>,
+    stack: Vec<StackItem>,
+}
+
+const USE_SELF_MSRV: RustcVersion = RustcVersion::new(1, 37, 0);
+
+impl UseSelf {
+    #[must_use]
+    pub fn new(msrv: Option<RustcVersion>) -> Self {
+        Self {
+            msrv,
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Debug)]
+enum StackItem {
+    Check {
+        hir_id: HirId,
+        impl_trait_ref_def_id: Option<LocalDefId>,
+        types_to_skip: Vec<HirId>,
+        types_to_lint: Vec<HirId>,
+    },
+    NoCheck,
+}
+
+impl_lint_pass!(UseSelf => [USE_SELF]);
 
 const SEGMENTS_MSG: &str = "segments should be composed of at least 1 element";
 
-fn span_use_self_lint(cx: &LateContext<'_, '_>, path: &Path) {
-    // Path segments only include actual path, no methods or fields.
-    let last_path_span = path.segments.last().expect(SEGMENTS_MSG).ident.span;
-    // Only take path up to the end of last_path_span.
-    let span = path.span.with_hi(last_path_span.hi());
+impl<'tcx> LateLintPass<'tcx> for UseSelf {
+    fn check_item(&mut self, cx: &LateContext<'_>, item: &Item<'_>) {
+        // We push the self types of `impl`s on a stack here. Only the top type on the stack is
+        // relevant for linting, since this is the self type of the `impl` we're currently in. To
+        // avoid linting on nested items, we push `StackItem::NoCheck` on the stack to signal, that
+        // we're in an `impl` or nested item, that we don't want to lint
+        //
+        // NB: If you push something on the stack in this method, remember to also pop it in the
+        // `check_item_post` method.
+        match &item.kind {
+            ItemKind::Impl(Impl {
+                self_ty: hir_self_ty,
+                of_trait,
+                ..
+            }) => {
+                let should_check = if let TyKind::Path(QPath::Resolved(_, ref item_path)) = hir_self_ty.kind {
+                    let parameters = &item_path.segments.last().expect(SEGMENTS_MSG).args;
+                    parameters.as_ref().map_or(true, |params| {
+                        !params.parenthesized && !params.args.iter().any(|arg| matches!(arg, GenericArg::Lifetime(_)))
+                    })
+                } else {
+                    false
+                };
+                let impl_trait_ref_def_id = of_trait.as_ref().map(|_| cx.tcx.hir().local_def_id(item.hir_id));
+                if should_check {
+                    self.stack.push(StackItem::Check {
+                        hir_id: hir_self_ty.hir_id,
+                        impl_trait_ref_def_id,
+                        types_to_lint: Vec::new(),
+                        types_to_skip: Vec::new(),
+                    });
+                } else {
+                    self.stack.push(StackItem::NoCheck);
+                }
+            },
+            ItemKind::Static(..)
+            | ItemKind::Const(..)
+            | ItemKind::Fn(..)
+            | ItemKind::Enum(..)
+            | ItemKind::Struct(..)
+            | ItemKind::Union(..)
+            | ItemKind::Trait(..) => {
+                self.stack.push(StackItem::NoCheck);
+            },
+            _ => (),
+        }
+    }
 
+    fn check_item_post(&mut self, _: &LateContext<'_>, item: &Item<'_>) {
+        use ItemKind::{Const, Enum, Fn, Impl, Static, Struct, Trait, Union};
+        match item.kind {
+            Impl { .. } | Static(..) | Const(..) | Fn(..) | Enum(..) | Struct(..) | Union(..) | Trait(..) => {
+                self.stack.pop();
+            },
+            _ => (),
+        }
+    }
+
+    fn check_impl_item(&mut self, cx: &LateContext<'_>, impl_item: &hir::ImplItem<'_>) {
+        // We want to skip types in trait `impl`s that aren't declared as `Self` in the trait
+        // declaration. The collection of those types is all this method implementation does.
+        if_chain! {
+            if let ImplItemKind::Fn(FnSig { decl, .. }, ..) = impl_item.kind;
+            if let Some(&mut StackItem::Check {
+                impl_trait_ref_def_id: Some(def_id),
+                ref mut types_to_skip,
+                ..
+            }) = self.stack.last_mut();
+            if let Some(impl_trait_ref) = cx.tcx.impl_trait_ref(def_id);
+            then {
+                // `self_ty` is the semantic self type of `impl <trait> for <type>`. This cannot be
+                // `Self`.
+                let self_ty = impl_trait_ref.self_ty();
+
+                // `trait_method_sig` is the signature of the function, how it is declared in the
+                // trait, not in the impl of the trait.
+                let trait_method = cx
+                    .tcx
+                    .associated_items(impl_trait_ref.def_id)
+                    .find_by_name_and_kind(cx.tcx, impl_item.ident, AssocKind::Fn, impl_trait_ref.def_id)
+                    .expect("impl method matches a trait method");
+                let trait_method_sig = cx.tcx.fn_sig(trait_method.def_id);
+                let trait_method_sig = cx.tcx.erase_late_bound_regions(trait_method_sig);
+
+                // `impl_inputs_outputs` is an iterator over the types (`hir::Ty`) declared in the
+                // implementation of the trait.
+                let output_hir_ty = if let FnRetTy::Return(ty) = &decl.output {
+                    Some(&**ty)
+                } else {
+                    None
+                };
+                let impl_inputs_outputs = decl.inputs.iter().chain(output_hir_ty);
+
+                // `impl_hir_ty` (of type `hir::Ty`) represents the type written in the signature.
+                //
+                // `trait_sem_ty` (of type `ty::Ty`) is the semantic type for the signature in the
+                // trait declaration. This is used to check if `Self` was used in the trait
+                // declaration.
+                //
+                // If `any`where in the `trait_sem_ty` the `self_ty` was used verbatim (as opposed
+                // to `Self`), we want to skip linting that type and all subtypes of it. This
+                // avoids suggestions to e.g. replace `Vec<u8>` with `Vec<Self>`, in an `impl Trait
+                // for u8`, when the trait always uses `Vec<u8>`.
+                //
+                // See also https://github.com/rust-lang/rust-clippy/issues/2894.
+                for (impl_hir_ty, trait_sem_ty) in impl_inputs_outputs.zip(trait_method_sig.inputs_and_output) {
+                    if trait_sem_ty.walk().any(|inner| inner == self_ty.into()) {
+                        let mut visitor = SkipTyCollector::default();
+                        visitor.visit_ty(&impl_hir_ty);
+                        types_to_skip.extend(visitor.types_to_skip);
+                    }
+                }
+            }
+        }
+    }
+
+    fn check_body(&mut self, cx: &LateContext<'tcx>, body: &'tcx hir::Body<'_>) {
+        // `hir_ty_to_ty` cannot be called in `Body`s or it will panic (sometimes). But in bodies
+        // we can use `cx.typeck_results.node_type(..)` to get the `ty::Ty` from a `hir::Ty`.
+        // However the `node_type()` method can *only* be called in bodies.
+        //
+        // This method implementation determines which types should get linted in a `Body` and
+        // which shouldn't, with a visitor. We could directly lint in the visitor, but then we
+        // could only allow this lint on item scope. And we would have to check if those types are
+        // already dealt with in `check_ty` anyway.
+        if let Some(StackItem::Check {
+            hir_id,
+            types_to_lint,
+            types_to_skip,
+            ..
+        }) = self.stack.last_mut()
+        {
+            let self_ty = ty_from_hir_id(cx, *hir_id);
+
+            let mut visitor = LintTyCollector {
+                cx,
+                self_ty,
+                types_to_lint: vec![],
+                types_to_skip: vec![],
+            };
+            visitor.visit_expr(&body.value);
+            types_to_lint.extend(visitor.types_to_lint);
+            types_to_skip.extend(visitor.types_to_skip);
+        }
+    }
+
+    fn check_ty(&mut self, cx: &LateContext<'_>, hir_ty: &hir::Ty<'_>) {
+        if in_macro(hir_ty.span) | in_impl(cx, hir_ty) | !meets_msrv(self.msrv.as_ref(), &USE_SELF_MSRV) {
+            return;
+        }
+
+        let lint_dependend_on_expr_kind = if let Some(StackItem::Check {
+            hir_id,
+            types_to_lint,
+            types_to_skip,
+            ..
+        }) = self.stack.last()
+        {
+            if types_to_skip.contains(&hir_ty.hir_id) {
+                false
+            } else if types_to_lint.contains(&hir_ty.hir_id) {
+                true
+            } else {
+                let self_ty = ty_from_hir_id(cx, *hir_id);
+                should_lint_ty(hir_ty, hir_ty_to_ty(cx.tcx, hir_ty), self_ty)
+            }
+        } else {
+            false
+        };
+
+        if lint_dependend_on_expr_kind {
+            // FIXME: this span manipulation should not be necessary
+            // @flip1995 found an ast lowering issue in
+            // https://github.com/rust-lang/rust/blob/master/src/librustc_ast_lowering/path.rs#l142-l162
+            match cx.tcx.hir().find(cx.tcx.hir().get_parent_node(hir_ty.hir_id)) {
+                Some(Node::Expr(Expr {
+                    kind: ExprKind::Path(QPath::TypeRelative(_, segment)),
+                    ..
+                })) => span_lint_until_last_segment(cx, hir_ty.span, segment),
+                _ => span_lint(cx, hir_ty.span),
+            }
+        }
+    }
+
+    fn check_expr(&mut self, cx: &LateContext<'_>, expr: &Expr<'_>) {
+        fn expr_ty_matches(cx: &LateContext<'_>, expr: &Expr<'_>, self_ty: Ty<'_>) -> bool {
+            let def_id = expr.hir_id.owner;
+            if cx.tcx.has_typeck_results(def_id) {
+                cx.tcx.typeck(def_id).expr_ty_opt(expr) == Some(self_ty)
+            } else {
+                false
+            }
+        }
+
+        if in_macro(expr.span) | !meets_msrv(self.msrv.as_ref(), &USE_SELF_MSRV) {
+            return;
+        }
+
+        if let Some(StackItem::Check { hir_id, .. }) = self.stack.last() {
+            let self_ty = ty_from_hir_id(cx, *hir_id);
+
+            match &expr.kind {
+                ExprKind::Struct(QPath::Resolved(_, path), ..) => {
+                    if expr_ty_matches(cx, expr, self_ty) {
+                        match path.res {
+                            def::Res::SelfTy(..) => (),
+                            def::Res::Def(DefKind::Variant, _) => span_lint_on_path_until_last_segment(cx, path),
+                            _ => {
+                                span_lint(cx, path.span);
+                            },
+                        }
+                    }
+                },
+                // tuple struct instantiation (`Foo(arg)` or `Enum::Foo(arg)`)
+                ExprKind::Call(fun, _) => {
+                    if let Expr {
+                        kind: ExprKind::Path(ref qpath),
+                        ..
+                    } = fun
+                    {
+                        if expr_ty_matches(cx, expr, self_ty) {
+                            let res = cx.qpath_res(qpath, fun.hir_id);
+
+                            if let def::Res::Def(DefKind::Ctor(ctor_of, _), ..) = res {
+                                match ctor_of {
+                                    def::CtorOf::Variant => {
+                                        span_lint_on_qpath_resolved(cx, qpath, true);
+                                    },
+                                    def::CtorOf::Struct => {
+                                        span_lint_on_qpath_resolved(cx, qpath, false);
+                                    },
+                                }
+                            }
+                        }
+                    }
+                },
+                // unit enum variants (`Enum::A`)
+                ExprKind::Path(qpath) => {
+                    if expr_ty_matches(cx, expr, self_ty) {
+                        span_lint_on_qpath_resolved(cx, &qpath, true);
+                    }
+                },
+                _ => (),
+            }
+        }
+    }
+
+    extract_msrv_attr!(LateContext);
+}
+
+#[derive(Default)]
+struct SkipTyCollector {
+    types_to_skip: Vec<HirId>,
+}
+
+impl<'tcx> Visitor<'tcx> for SkipTyCollector {
+    type Map = Map<'tcx>;
+
+    fn visit_ty(&mut self, hir_ty: &hir::Ty<'_>) {
+        self.types_to_skip.push(hir_ty.hir_id);
+
+        walk_ty(self, hir_ty)
+    }
+
+    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
+        NestedVisitorMap::None
+    }
+}
+
+struct LintTyCollector<'a, 'tcx> {
+    cx: &'a LateContext<'tcx>,
+    self_ty: Ty<'tcx>,
+    types_to_lint: Vec<HirId>,
+    types_to_skip: Vec<HirId>,
+}
+
+impl<'a, 'tcx> Visitor<'tcx> for LintTyCollector<'a, 'tcx> {
+    type Map = Map<'tcx>;
+
+    fn visit_ty(&mut self, hir_ty: &'tcx hir::Ty<'_>) {
+        if_chain! {
+            if let Some(ty) = self.cx.typeck_results().node_type_opt(hir_ty.hir_id);
+            if should_lint_ty(hir_ty, ty, self.self_ty);
+            then {
+                self.types_to_lint.push(hir_ty.hir_id);
+            } else {
+                self.types_to_skip.push(hir_ty.hir_id);
+            }
+        }
+
+        walk_ty(self, hir_ty)
+    }
+
+    fn nested_visit_map(&mut self) -> NestedVisitorMap<Self::Map> {
+        NestedVisitorMap::None
+    }
+}
+
+fn span_lint(cx: &LateContext<'_>, span: Span) {
     span_lint_and_sugg(
         cx,
         USE_SELF,
@@ -68,186 +398,66 @@ fn span_use_self_lint(cx: &LateContext<'_, '_>, path: &Path) {
     );
 }
 
-struct TraitImplTyVisitor<'a, 'tcx: 'a> {
-    item_type: Ty<'tcx>,
-    cx: &'a LateContext<'a, 'tcx>,
-    trait_type_walker: ty::walk::TypeWalker<'tcx>,
-    impl_type_walker: ty::walk::TypeWalker<'tcx>,
-}
-
-impl<'a, 'tcx> Visitor<'tcx> for TraitImplTyVisitor<'a, 'tcx> {
-    fn visit_ty(&mut self, t: &'tcx hir::Ty) {
-        let trait_ty = self.trait_type_walker.next();
-        let impl_ty = self.impl_type_walker.next();
-
-        if let TyKind::Path(QPath::Resolved(_, path)) = &t.node {
-            // The implementation and trait types don't match which means that
-            // the concrete type was specified by the implementation
-            if impl_ty != trait_ty {
-                if let Some(impl_ty) = impl_ty {
-                    if self.item_type == impl_ty {
-                        let is_self_ty = if let def::Res::SelfTy(..) = path.res {
-                            true
-                        } else {
-                            false
-                        };
-
-                        if !is_self_ty {
-                            span_use_self_lint(self.cx, path);
-                        }
-                    }
-                }
-            }
-        }
-
-        walk_ty(self, t)
-    }
-
-    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
-        NestedVisitorMap::None
-    }
-}
-
-fn check_trait_method_impl_decl<'a, 'tcx: 'a>(
-    cx: &'a LateContext<'a, 'tcx>,
-    item_type: Ty<'tcx>,
-    impl_item: &ImplItem,
-    impl_decl: &'tcx FnDecl,
-    impl_trait_ref: &ty::TraitRef<'_>,
-) {
-    let trait_method = cx
-        .tcx
-        .associated_items(impl_trait_ref.def_id)
-        .find(|assoc_item| {
-            assoc_item.kind == ty::AssociatedKind::Method
-                && cx
-                    .tcx
-                    .hygienic_eq(impl_item.ident, assoc_item.ident, impl_trait_ref.def_id)
-        })
-        .expect("impl method matches a trait method");
-
-    let trait_method_sig = cx.tcx.fn_sig(trait_method.def_id);
-    let trait_method_sig = cx.tcx.erase_late_bound_regions(&trait_method_sig);
-
-    let impl_method_def_id = cx.tcx.hir().local_def_id_from_hir_id(impl_item.hir_id);
-    let impl_method_sig = cx.tcx.fn_sig(impl_method_def_id);
-    let impl_method_sig = cx.tcx.erase_late_bound_regions(&impl_method_sig);
-
-    let output_ty = if let FunctionRetTy::Return(ty) = &impl_decl.output {
-        Some(&**ty)
-    } else {
-        None
+#[allow(clippy::cast_possible_truncation)]
+fn span_lint_until_last_segment(cx: &LateContext<'_>, span: Span, segment: &PathSegment<'_>) {
+    let sp = span.with_hi(segment.ident.span.lo());
+    // remove the trailing ::
+    let span_without_last_segment = match snippet_opt(cx, sp) {
+        Some(snippet) => match snippet.rfind("::") {
+            Some(bidx) => sp.with_hi(sp.lo() + BytePos(bidx as u32)),
+            None => sp,
+        },
+        None => sp,
     };
+    span_lint(cx, span_without_last_segment);
+}
 
-    // `impl_decl_ty` (of type `hir::Ty`) represents the type declared in the signature.
-    // `impl_ty` (of type `ty:TyS`) is the concrete type that the compiler has determined for
-    // that declaration. We use `impl_decl_ty` to see if the type was declared as `Self`
-    // and use `impl_ty` to check its concrete type.
-    for (impl_decl_ty, (impl_ty, trait_ty)) in impl_decl.inputs.iter().chain(output_ty).zip(
-        impl_method_sig
-            .inputs_and_output
-            .iter()
-            .zip(trait_method_sig.inputs_and_output),
-    ) {
-        let mut visitor = TraitImplTyVisitor {
-            cx,
-            item_type,
-            trait_type_walker: trait_ty.walk(),
-            impl_type_walker: impl_ty.walk(),
-        };
-
-        visitor.visit_ty(&impl_decl_ty);
+fn span_lint_on_path_until_last_segment(cx: &LateContext<'_>, path: &Path<'_>) {
+    if path.segments.len() > 1 {
+        span_lint_until_last_segment(cx, path.span, path.segments.last().unwrap());
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UseSelf {
-    fn check_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx Item) {
-        if in_external_macro(cx.sess(), item.span) {
-            return;
-        }
-        if_chain! {
-            if let ItemKind::Impl(.., ref item_type, ref refs) = item.node;
-            if let TyKind::Path(QPath::Resolved(_, ref item_path)) = item_type.node;
-            then {
-                let parameters = &item_path.segments.last().expect(SEGMENTS_MSG).args;
-                let should_check = if let Some(ref params) = *parameters {
-                    !params.parenthesized && !params.args.iter().any(|arg| match arg {
-                        GenericArg::Lifetime(_) => true,
-                        _ => false,
-                    })
-                } else {
-                    true
-                };
-
-                if should_check {
-                    let visitor = &mut UseSelfVisitor {
-                        item_path,
-                        cx,
-                    };
-                    let impl_def_id = cx.tcx.hir().local_def_id_from_hir_id(item.hir_id);
-                    let impl_trait_ref = cx.tcx.impl_trait_ref(impl_def_id);
-
-                    if let Some(impl_trait_ref) = impl_trait_ref {
-                        for impl_item_ref in refs {
-                            let impl_item = cx.tcx.hir().impl_item(impl_item_ref.id);
-                            if let ImplItemKind::Method(MethodSig{ decl: impl_decl, .. }, impl_body_id)
-                                    = &impl_item.node {
-                                let item_type = cx.tcx.type_of(impl_def_id);
-                                check_trait_method_impl_decl(cx, item_type, impl_item, impl_decl, &impl_trait_ref);
-
-                                let body = cx.tcx.hir().body(*impl_body_id);
-                                visitor.visit_body(body);
-                            } else {
-                                visitor.visit_impl_item(impl_item);
-                            }
-                        }
-                    } else {
-                        for impl_item_ref in refs {
-                            let impl_item = cx.tcx.hir().impl_item(impl_item_ref.id);
-                            visitor.visit_impl_item(impl_item);
-                        }
-                    }
-                }
-            }
+fn span_lint_on_qpath_resolved(cx: &LateContext<'_>, qpath: &QPath<'_>, until_last_segment: bool) {
+    if let QPath::Resolved(_, path) = qpath {
+        if until_last_segment {
+            span_lint_on_path_until_last_segment(cx, path);
+        } else {
+            span_lint(cx, path.span);
         }
     }
 }
 
-struct UseSelfVisitor<'a, 'tcx: 'a> {
-    item_path: &'a Path,
-    cx: &'a LateContext<'a, 'tcx>,
+fn ty_from_hir_id<'tcx>(cx: &LateContext<'tcx>, hir_id: HirId) -> Ty<'tcx> {
+    if let Some(Node::Ty(hir_ty)) = cx.tcx.hir().find(hir_id) {
+        hir_ty_to_ty(cx.tcx, hir_ty)
+    } else {
+        unreachable!("This function should only be called with `HirId`s that are for sure `Node::Ty`")
+    }
 }
 
-impl<'a, 'tcx> Visitor<'tcx> for UseSelfVisitor<'a, 'tcx> {
-    fn visit_path(&mut self, path: &'tcx Path, _id: HirId) {
-        if path.segments.last().expect(SEGMENTS_MSG).ident.name != kw::SelfUpper {
-            if self.item_path.res == path.res {
-                span_use_self_lint(self.cx, path);
-            } else if let Res::Def(DefKind::Ctor(def::CtorOf::Struct, CtorKind::Fn), ctor_did) = path.res {
-                if self.item_path.res.opt_def_id() == self.cx.tcx.parent(ctor_did) {
-                    span_use_self_lint(self.cx, path);
-                }
-            }
-        }
-        walk_path(self, path);
-    }
-
-    fn visit_item(&mut self, item: &'tcx Item) {
-        match item.node {
-            ItemKind::Use(..)
-            | ItemKind::Static(..)
-            | ItemKind::Enum(..)
-            | ItemKind::Struct(..)
-            | ItemKind::Union(..)
-            | ItemKind::Impl(..)
-            | ItemKind::Fn(..) => {
-                // Don't check statements that shadow `Self` or where `Self` can't be used
-            },
-            _ => walk_item(self, item),
+fn in_impl(cx: &LateContext<'tcx>, hir_ty: &hir::Ty<'_>) -> bool {
+    let map = cx.tcx.hir();
+    let parent = map.get_parent_node(hir_ty.hir_id);
+    if_chain! {
+        if let Some(Node::Item(item)) = map.find(parent);
+        if let ItemKind::Impl { .. } = item.kind;
+        then {
+            true
+        } else {
+            false
         }
     }
+}
 
-    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
-        NestedVisitorMap::All(&self.cx.tcx.hir())
+fn should_lint_ty(hir_ty: &hir::Ty<'_>, ty: Ty<'_>, self_ty: Ty<'_>) -> bool {
+    if_chain! {
+        if TyS::same_type(ty, self_ty);
+        if let TyKind::Path(QPath::Resolved(_, path)) = hir_ty.kind;
+        then {
+            !matches!(path.res, def::Res::SelfTy(..))
+        } else {
+            false
+        }
     }
 }

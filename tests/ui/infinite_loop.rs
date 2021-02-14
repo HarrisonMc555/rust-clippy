@@ -1,5 +1,3 @@
-#![allow(clippy::trivially_copy_pass_by_ref)]
-
 fn fn_val(i: i32) -> i32 {
     unimplemented!()
 }
@@ -177,6 +175,23 @@ impl Counter {
     }
 }
 
+fn while_loop_with_break_and_return() {
+    let y = 0;
+    while y < 10 {
+        if y == 0 {
+            break;
+        }
+        println!("KO - loop contains break");
+    }
+
+    while y < 10 {
+        if y == 0 {
+            return;
+        }
+        println!("KO - loop contains return");
+    }
+}
+
 fn main() {
     immutable_condition();
     unused_var();
@@ -186,4 +201,6 @@ fn main() {
     let mut c = Counter { count: 0 };
     c.inc_n(5);
     c.print_n(2);
+
+    while_loop_with_break_and_return();
 }

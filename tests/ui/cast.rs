@@ -37,37 +37,59 @@ fn main() {
     1isize as usize;
     -1isize as usize;
     0i8 as u8;
-    i8::max_value() as u8;
-    i16::max_value() as u16;
-    i32::max_value() as u32;
-    i64::max_value() as u64;
-    i128::max_value() as u128;
-    // Extra checks for *size
-    // Test cast_unnecessary
-    1i32 as i32;
-    1f32 as f32;
-    false as bool;
-    &1i32 as &i32;
-    // macro version
-    macro_rules! foo {
-        ($a:ident, $b:ident) => {
-            pub fn $a() -> $b {
-                1 as $b
-            }
-        };
-    }
-    foo!(a, i32);
-    foo!(b, f32);
-    foo!(c, f64);
+    i8::MAX as u8;
+    i16::MAX as u16;
+    i32::MAX as u32;
+    i64::MAX as u64;
+    i128::MAX as u128;
 
-    // casting integer literal to float is unnecessary
-    100 as f32;
-    100 as f64;
-    100_i32 as f64;
-    // Should not trigger
-    #[rustfmt::skip]
-    let v = vec!(1);
-    &v as &[i32];
-    1.0 as f64;
-    1 as u64;
+    (-1i8).abs() as u8;
+    (-1i16).abs() as u16;
+    (-1i32).abs() as u32;
+    (-1i64).abs() as u64;
+    (-1isize).abs() as usize;
+
+    (-1i8).checked_abs().unwrap() as u8;
+    (-1i16).checked_abs().unwrap() as u16;
+    (-1i32).checked_abs().unwrap() as u32;
+    (-1i64).checked_abs().unwrap() as u64;
+    (-1isize).checked_abs().unwrap() as usize;
+
+    (-1i8).rem_euclid(1i8) as u8;
+    (-1i8).rem_euclid(1i8) as u16;
+    (-1i16).rem_euclid(1i16) as u16;
+    (-1i16).rem_euclid(1i16) as u32;
+    (-1i32).rem_euclid(1i32) as u32;
+    (-1i32).rem_euclid(1i32) as u64;
+    (-1i64).rem_euclid(1i64) as u64;
+    (-1i64).rem_euclid(1i64) as u128;
+    (-1isize).rem_euclid(1isize) as usize;
+    (1i8).rem_euclid(-1i8) as u8;
+    (1i8).rem_euclid(-1i8) as u16;
+    (1i16).rem_euclid(-1i16) as u16;
+    (1i16).rem_euclid(-1i16) as u32;
+    (1i32).rem_euclid(-1i32) as u32;
+    (1i32).rem_euclid(-1i32) as u64;
+    (1i64).rem_euclid(-1i64) as u64;
+    (1i64).rem_euclid(-1i64) as u128;
+    (1isize).rem_euclid(-1isize) as usize;
+
+    (-1i8).checked_rem_euclid(1i8).unwrap() as u8;
+    (-1i8).checked_rem_euclid(1i8).unwrap() as u16;
+    (-1i16).checked_rem_euclid(1i16).unwrap() as u16;
+    (-1i16).checked_rem_euclid(1i16).unwrap() as u32;
+    (-1i32).checked_rem_euclid(1i32).unwrap() as u32;
+    (-1i32).checked_rem_euclid(1i32).unwrap() as u64;
+    (-1i64).checked_rem_euclid(1i64).unwrap() as u64;
+    (-1i64).checked_rem_euclid(1i64).unwrap() as u128;
+    (-1isize).checked_rem_euclid(1isize).unwrap() as usize;
+    (1i8).checked_rem_euclid(-1i8).unwrap() as u8;
+    (1i8).checked_rem_euclid(-1i8).unwrap() as u16;
+    (1i16).checked_rem_euclid(-1i16).unwrap() as u16;
+    (1i16).checked_rem_euclid(-1i16).unwrap() as u32;
+    (1i32).checked_rem_euclid(-1i32).unwrap() as u32;
+    (1i32).checked_rem_euclid(-1i32).unwrap() as u64;
+    (1i64).checked_rem_euclid(-1i64).unwrap() as u64;
+    (1i64).checked_rem_euclid(-1i64).unwrap() as u128;
+    (1isize).checked_rem_euclid(-1isize).unwrap() as usize;
 }

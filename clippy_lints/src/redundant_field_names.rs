@@ -1,8 +1,12 @@
-use crate::utils::span_lint_and_sugg;
-use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use rustc::{declare_lint_pass, declare_tool_lint};
+use crate::utils::{meets_msrv, span_lint_and_sugg};
+use rustc_ast::ast::{Expr, ExprKind};
 use rustc_errors::Applicability;
-use syntax::ast::*;
+use rustc_lint::{EarlyContext, EarlyLintPass};
+use rustc_middle::lint::in_external_macro;
+use rustc_semver::RustcVersion;
+use rustc_session::{declare_tool_lint, impl_lint_pass};
+
+const REDUNDANT_FIELD_NAMES_MSRV: RustcVersion = RustcVersion::new(1, 17, 0);
 
 declare_clippy_lint! {
     /// **What it does:** Checks for fields in struct literals where shorthands
@@ -32,16 +36,34 @@ declare_clippy_lint! {
     "checks for fields in struct literals where shorthands could be used"
 }
 
-declare_lint_pass!(RedundantFieldNames => [REDUNDANT_FIELD_NAMES]);
+pub struct RedundantFieldNames {
+    msrv: Option<RustcVersion>,
+}
+
+impl RedundantFieldNames {
+    #[must_use]
+    pub fn new(msrv: Option<RustcVersion>) -> Self {
+        Self { msrv }
+    }
+}
+
+impl_lint_pass!(RedundantFieldNames => [REDUNDANT_FIELD_NAMES]);
 
 impl EarlyLintPass for RedundantFieldNames {
     fn check_expr(&mut self, cx: &EarlyContext<'_>, expr: &Expr) {
-        if let ExprKind::Struct(_, ref fields, _) = expr.node {
+        if !meets_msrv(self.msrv.as_ref(), &REDUNDANT_FIELD_NAMES_MSRV) {
+            return;
+        }
+
+        if in_external_macro(cx.sess, expr.span) {
+            return;
+        }
+        if let ExprKind::Struct(_, ref fields, _) = expr.kind {
             for field in fields {
                 if field.is_shorthand {
                     continue;
                 }
-                if let ExprKind::Path(None, path) = &field.expr.node {
+                if let ExprKind::Path(None, path) = &field.expr.kind {
                     if path.segments.len() == 1
                         && path.segments[0].ident == field.ident
                         && path.segments[0].args.is_none()
@@ -60,4 +82,5 @@ impl EarlyLintPass for RedundantFieldNames {
             }
         }
     }
+    extract_msrv_attr!(EarlyContext);
 }

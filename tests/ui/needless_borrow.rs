@@ -1,6 +1,7 @@
-use std::borrow::Cow;
+// run-rustfix
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
+#![allow(clippy::needless_borrowed_reference)]
+
 fn x(y: &i32) -> i32 {
     *y
 }
@@ -41,7 +42,7 @@ trait Trait {}
 
 impl<'a> Trait for &'a str {}
 
-fn h(_: &Trait) {}
+fn h(_: &dyn Trait) {}
 #[warn(clippy::needless_borrow)]
 #[allow(dead_code)]
 fn issue_1432() {
